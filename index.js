@@ -12,6 +12,10 @@ const jwt = require("jsonwebtoken");
 const errorHandler = require("./middlewares/errorHandlers");
 const MongoDB = require("./config/db");
 
+
+const authRoute = require("./routes/authRoute");
+
+
 // Initialize environment variables
 dotenv.config();
 
@@ -49,7 +53,8 @@ redisClient.on("error", (err) => {
   });
 
 
-//   app.use("/api/auth",authRoute)
+  app.use("/api/auth",authRoute)
+
 //   app.use("/api/admin",adminRoute)
 //   app.use("/api/user",userRoute)
 //   app.use("/api/ai",aiRoute)
