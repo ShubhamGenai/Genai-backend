@@ -1,0 +1,45 @@
+****packages
+
+
+// normal packages
+express mongoose dotenv cors helmet  bcryptjs   jsonwebtoken   multer    aws-sdk     cloudinary     stripe      nodemailer
+ cookie-parser   compression    redis    express-rate-limit    socket.io   body-parser    axios     chrome-aws-lambda    google-auth-library
+ jsdom nodemon otp-generator  razorpay twilio
+
+
+
+// google login
+passport
+passport-google-oauth
+
+
+
+//linkedin
+passport-linkedin-oauth2
+
+
+        // RAG    (Retrieval-Augmented Generation.)
+
+          @huggingface/inference
+          @faker-js/faker 
+          @langchain/community @langchain/core
+          @supabase/supabase-js
+          @xenova/transformers
+          langchain
+          @sparticuz/chromium
+
+
+
+
+
+
+Features for High Scalability & Performance
+
+✅ Redis Caching (For quick API responses)
+✅ CDN for Assets (AWS S3 + CloudFront)
+✅ Database Optimization (Indexing, Sharding, Read Replicas)
+✅ Kubernetes for Containerized Deployment
+✅ GraphQL for Efficient Data Fetching
+
+
+
