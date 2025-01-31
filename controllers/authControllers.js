@@ -197,13 +197,97 @@ const loginUser = async (req, res) => {
 };
 
 
+const restpassword = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000); // Random 6-digit OTP
+
+    // Save OTP to user's account
+    user.otp = otp.toString(); // Store OTP as a string
+    await user.save();
+
+    // Send OTP via email
+    await sendOtpEmail(email, otp);
+
+    res.json({ message: 'OTP sent to your email' });
+  } catch (error) {
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+};
+
+
+const verifyResetOtp = async (req, res) => {
+  const { otp, email } = req.body;
+
+  try {
+    // Find user in the database using the provided email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'User not found' });
+    }
+
+    // Check if the OTP matches the one stored in the user's record
+    if (user.otp !== otp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    }
+
+    // OTP matches, set the user's OTP field to null
+    user.otp = null;
+    await user.save();
+
+    res.json({ success: true, message: 'OTP verified and cleared' });
+  } catch (error) {
+    console.error('Error verifying OTP:', error);
+    res.status(500).json({ success: false, message: 'Server error. Please try again later.' });
+  }
+};
+
+
+const setPassword = async (req, res) => {
+  const { email, newPassword } = req.body;
+
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'User not found' });
+    }
+
+    // Hash the new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update user password and clear OTP (if using OTP reset flow)
+    user.password = hashedPassword;
+    user.otp = null; // Optional: Clear OTP after password reset if you used OTP for reset
+    await user.save();
+
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ success: false, message: 'Server error. Please try again later.' });
+  }
+};
+
+
 
 
 module.exports = {
   registerUser,
   verifyOtp,
   completeProfile,
-  loginUser
+  loginUser,
+  restpassword,
+  verifyResetOtp,
+  setPassword
 
 
 

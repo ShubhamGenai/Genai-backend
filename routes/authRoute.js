@@ -8,4 +8,10 @@ router.post('/verify-otp', authController.verifyOtp);
 router.post('/complete-profile', authController.completeProfile);
 router.post('/login', authController.loginUser);
 
+
+router.post('/reset-password/email', authController.restpassword);
+router.post('/reset-password/verify-otp', authController.verifyResetOtp);
+router.post('/reset-password/set-password', authController.setPassword);
+
+
 module.exports=router
