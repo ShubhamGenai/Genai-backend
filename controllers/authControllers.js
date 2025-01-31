@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require("jsonwebtoken")
 const dotenv = require("dotenv")
 dotenv.config();
-
+require('../config/passport');
 
 const registerUser = async (req, res) => {
   const { name, email, password, role } = req.body;
@@ -278,6 +278,40 @@ const setPassword = async (req, res) => {
 };
 
 
+// Google Login
+const googlelogin = (req, res, next) => {
+  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+};
+
+const googleCallback = (req, res) => {
+  passport.authenticate('google', (err, userObj) => {
+    if (err) {
+      console.error('Authentication error:', err);
+      return res.status(500).json({ error: 'Authentication failed' });
+    }
+    if (!userObj) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    const { user, token } = userObj;  // Destructure user and token from the returned object
+
+    req.logIn(user, (err) => {
+      if (err) {
+        console.error('Login error:', err);
+        return res.status(500).json({ error: 'Login failed' });
+      }
+
+      // Construct the redirect URL with the token and user ID
+      const redirectUrl = `https://www.genailearning.in/auth/callback?token=${token}&id=${user._id}&role=${user.role}`;
+
+      // Redirect to the frontend application with the token in the query parameters
+      res.redirect(redirectUrl);
+    });
+  })(req, res);
+};
+
+
+
 
 
 module.exports = {
@@ -287,7 +321,12 @@ module.exports = {
   loginUser,
   restpassword,
   verifyResetOtp,
-  setPassword
+  setPassword,
+
+  googlelogin,
+  googleCallback,
+
+  
 
 
 
