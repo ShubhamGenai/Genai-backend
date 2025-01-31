@@ -1,6 +1,7 @@
 const express = require("express")
 const router=express.Router()
-const authController=require("../controllers/authControllers")
+const authController=require("../controllers/authControllers");
+const authMiddleware = require("../middlewares/AuthMiddleware");
 
 
 router.post('/register', authController.registerUser);
@@ -16,6 +17,11 @@ router.post('/reset-password/set-password', authController.setPassword);
 
 router.get("/google",authController.googlelogin)
 router.get('/google/callback', authController.googleCallback);
+
+
+router.get("/userDetails",authMiddleware,authController.getUserDetails)
+
+
 
 
 module.exports=router
