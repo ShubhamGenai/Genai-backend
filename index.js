@@ -19,6 +19,7 @@ const authRoute = require("./routes/authRoute");
 const contentRoute = require("../routes/contentRoute");
 const contentRoute = require("../routes/contentRoute");
 const adminRoute = require("../routes/adminRoute");
+const employerRoute = require("../routes/employerRoute");
 
 // Initialize environment variables
 dotenv.config();
@@ -66,6 +67,9 @@ MongoDB();
 app.use("/api/auth", authRoute);
 app.use("/api/content", contentRoute);
 app.use("/api/admin", adminRoute);
+app.use("/api/employer", employerRoute);
+
+
 
 
 
