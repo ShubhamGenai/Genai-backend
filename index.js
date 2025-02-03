@@ -16,6 +16,7 @@ const MongoDB = require("./config/db");
 
 // Import routes
 const authRoute = require("./routes/authRoute");
+const contentRoute = require("../routes/contentRoute");
 
 // Initialize environment variables
 dotenv.config();
@@ -61,6 +62,7 @@ MongoDB();
 
 // Define routes
 app.use("/api/auth", authRoute);
+app.use("/api/content", contentRoute);
 
 
 
