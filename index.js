@@ -16,10 +16,9 @@ const MongoDB = require("./config/db");
 
 // Import routes
 const authRoute = require("./routes/authRoute");
-const contentRoute = require("../routes/contentRoute");
-const contentRoute = require("../routes/contentRoute");
-const adminRoute = require("../routes/adminRoute");
-const employerRoute = require("../routes/employerRoute");
+const contentRoute = require("./routes/contentRoute");
+const adminRoute = require("./routes/adminRoute");
+const employerRoute = require("./routes/employerRoute");
 
 // Initialize environment variables
 dotenv.config();
