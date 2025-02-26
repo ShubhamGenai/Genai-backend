@@ -78,23 +78,24 @@ app.use("/api/employer", employerRoute);
 
 
 // Cluster mode to utilize all CPU cores (for scalability)
-if (cluster.isMaster) {
-  const numCPUs = os.cpus().length;
-  console.log(`Master server is running. Forking ${numCPUs} workers...`);
+// if (cluster.isMaster) {
+//   const numCPUs = os.cpus().length;
+//   console.log(`Master server is running. Forking ${numCPUs} workers...`);
 
-  // Fork workers
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork();
-  }
+//   // Fork workers
+//   for (let i = 0; i < numCPUs; i++) {
+//     cluster.fork();
+//   }
 
-  cluster.on('exit', (worker, code, signal) => {
-    console.log(`Worker ${worker.process.pid} died`);
-  });
-} else {
+//   cluster.on('exit', (worker, code, signal) => {
+//     console.log(`Worker ${worker.process.pid} died`);
+//   });
+
+// } else {
   // App listening on specified port
   const PORT = process.env.PORT || 8080;
   app.listen(PORT, () => {
     console.log(`Worker ${process.pid} listening on port ${PORT}`);
   });
-}
+// }
 
