@@ -57,7 +57,7 @@ const UserSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin','content','employer'], // Define possible roles
+        enum: ['student', 'admin','content','employer'], // Define possible roles
         default: 'user', // Default role
     },
 }, { timestamps: true });
@@ -86,7 +86,6 @@ UserSchema.pre('save', async function(next) {
     next();
 });
 
-UserSchema.index({ email: 1 });
 
 // Create and export the model
 module.exports = mongoose.model('User', UserSchema);

@@ -13,7 +13,7 @@ const cluster = require("cluster");
 const os = require("os");
 const errorHandler = require("./middlewares/errorHandlers");
 const MongoDB = require("./config/db");
-
+const axios = require("axios");
 // Import routes
 const authRoute = require("./routes/authRoute");
 const contentRoute = require("./routes/contentRoute");
@@ -28,9 +28,9 @@ const app = express();
 // Enable CORS (uncomment and modify if needed)
 
 const corsOptions = {
-  // origin: "https://www.genailearning.in", // Allow only this origin
-  // methods: ["GET", "POST", "PUT", "DELETE"],
-  // credentials: true,
+  origin: "https://www.genailearning.in", // Allow only this origin
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true,
 };
 
 app.use(cors(corsOptions));
@@ -49,6 +49,10 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.get("/", (req, res) => {
   res.json("Hello from the API!");
 });
+
+
+
+ 
 
 // Error handling middleware
 app.use(errorHandler);

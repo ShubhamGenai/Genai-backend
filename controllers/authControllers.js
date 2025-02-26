@@ -7,9 +7,11 @@ dotenv.config();
 require('../config/passport');
 
 const registerUser = async (req, res) => {
-  const { name, email, password, role } = req.body;
 
-  if (!name || !email || !password || !role) {
+
+  const { fullName, email, password, role } = req.body;
+
+  if (!fullName || !email || !password || !role) {
     return res.status(400).json({ success: false, message: "All fields are required." });
   }
 
@@ -22,7 +24,7 @@ const registerUser = async (req, res) => {
       }
 
       // If user exists but is not verified, update details
-      user.name = name;
+      user.name = fullName;
       user.password = await bcrypt.hash(password, 10);
       user.role = role;
 
@@ -42,7 +44,7 @@ const registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     user = new User({
-      name,
+      name: fullName,
       email,
       password: hashedPassword,
       role,
@@ -142,59 +144,65 @@ const completeProfile = async (req, res) => {
 
 
 const loginUser = async (req, res) => {
+  console.log("Login Request:", req.body);
+
   const { email, password } = req.body;
 
   try {
+    // Check if the user exists
     const user = await User.findOne({ email });
-
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: 'No account found with these credentials.',
+        message: "No account found with these credentials.",
       });
     }
 
+    // Verify password
     const isMatch = await bcrypt.compare(password, user.password);
-
     if (!isMatch) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credentials.',
-      });
-    }
-
-    if (!user.isVerified) {
       return res.status(401).json({
         success: false,
-        message: 'User is not verified. Please check your email to verify your account.',
+        message: "Invalid credentials.",
       });
     }
 
+    // Check if the user is verified
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "User is not verified. Please check your email to verify your account.",
+      });
+    }
+
+    // Generate JWT token
     const token = jwt.sign(
       { id: user._id, role: user.role, name: user.name },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: "1h" }
     );
 
-    res.json({
+    return res.status(200).json({
+      success: true,
+      message: "Login successful.",
       token,
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
         role: user.role,
-        name: user.name
-      }
+        name: user.name,
+      },
     });
-
   } catch (error) {
-    console.error('Error during login:', error);
-    res.status(500).json({
+    console.error("Error during login:", error);
+    return res.status(500).json({
       success: false,
-      message: 'Server error. Please try again later.',
+      message: "Server error. Please try again later.",
     });
   }
 };
+
 
 
 const restpassword = async (req, res) => {
@@ -312,10 +320,13 @@ const googleCallback = (req, res) => {
 
 
 const getUserDetails = async (req, res) => {
+  console.log("here");
+  
 
   try {
     const user = await User.findById(req.user.id).select('-password');
-    res.json({ user });
+    
+    res.status(200).json({ user });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
