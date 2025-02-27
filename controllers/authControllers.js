@@ -5,6 +5,8 @@ const jwt = require("jsonwebtoken")
 const dotenv = require("dotenv")
 dotenv.config();
 require('../config/passport');
+const { OAuth2Client } = require('google-auth-library');
+const passport = require('passport');
 
 const registerUser = async (req, res) => {
 

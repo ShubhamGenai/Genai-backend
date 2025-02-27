@@ -9,7 +9,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: 'https://genai-backend-ten.vercel.app/api/auth/google/callback',
+      callbackURL: 'https://genai-backend-eight.vercel.app/api/auth/google/callback',
     },
     async (accessToken, refreshToken, profile, done) => {
       // Check if user already exists in our db
@@ -32,6 +32,8 @@ passport.use(
         contact: phoneNumber, 
         isVerified: true,
         isEmailVerified: true,
+        isProfileVerified: false,
+        role:"student",
         otp: null,
         password:"wertyui124aasauu677hh"
       }).save();

@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
+const passport = require('passport');
 const compression = require("compression");
 const morgan = require("morgan");
 const redis = require("redis");
@@ -41,7 +42,8 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
-
+app.use(passport.initialize())
+app.use(passport.session())
 // Static file hosting
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
