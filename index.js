@@ -15,6 +15,8 @@ const os = require("os");
 const errorHandler = require("./middlewares/errorHandlers");
 const MongoDB = require("./config/db");
 const axios = require("axios");
+const session = require('express-session');
+
 // Import routes
 const authRoute = require("./routes/authRoute");
 const contentRoute = require("./routes/contentRoute");
