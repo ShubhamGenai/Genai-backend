@@ -27,6 +27,13 @@ dotenv.config();
 const app = express();
 
 // Enable CORS (uncomment and modify if needed)
+app.use(
+  session({
+    secret: "process.env.SESSION_SECRET",
+    resave: false,
+    saveUninitialized: false,
+  })
+);
 
 const corsOptions = {
   origin: "https://www.genailearning.in", // Allow only this origin
