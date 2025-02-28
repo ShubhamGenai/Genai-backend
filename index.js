@@ -97,7 +97,7 @@ app.use("/api/employer", employerRoute);
   // App listening on specified port
   const PORT = process.env.PORT || 8080;
   app.listen(PORT, () => {
-    console.log(`Worker ${process.pid} listening on port ${PORT}`);
+    console.log(` listening on port ${PORT}`);
   });
 // }
 
