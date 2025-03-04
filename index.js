@@ -39,7 +39,7 @@ app.use(
 
 const allowedOrigins = [
   "https://www.genailearning.com",
-  "http://localhost:5173"
+  // "http://localhost:5173"
 ];
 
 app.use(cors({
