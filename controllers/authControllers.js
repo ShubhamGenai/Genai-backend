@@ -151,61 +151,50 @@ const loginUser = async (req, res) => {
   console.log("Login Request:", req.body);
 
   const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, message: "Email and password are required." });
+  }
 
   try {
-    // Check if the user exists
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "No account found with these credentials.",
-      });
-    }
+    // Using an immediately invoked function expression (IIFE)
+    const response = await (async () => {
+      // Fetch user and check if exists
+      const user = await User.findOne({ email }).select("+password").lean();
+      if (!user) return { status: 400, message: "Invalid credentials." };
 
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials.",
-      });
-    }
+      // Compare password
+      if (!(await bcrypt.compare(password, user.password))) {
+        return { status: 401, message: "Invalid credentials." };
+      }
 
-    // Check if the user is verified
-    if (!user.isVerified) {
-      return res.status(403).json({
-        success: false,
-        message: "User is not verified. Please check your email to verify your account.",
-      });
-    }
+      // Check verification status
+      if (!user.isVerified) {
+        return { status: 403, message: "Please verify your account via email." };
+      }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: user._id, role: user.role, name: user.name },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+      // Generate JWT
+      const token = jwt.sign(
+        { id: user._id, role: user.role, name: user.name, isProfileVerified: user.isProfileVerified },
+        process.env.JWT_SECRET,
+        { expiresIn: "1h" }
+      );
 
-    return res.status(200).json({
-      success: true,
-      message: "Login successful.",
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        name: user.name,
-      },
-    });
+      return {
+        status: 200,
+        success: true,
+        message: "Login successful.",
+        token,
+        user: { id: user._id, username: user.username, email: user.email, role: user.role, name: user.name },
+      };
+    })();
+
+    return res.status(response.status).json(response);
   } catch (error) {
     console.error("Error during login:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server error. Please try again later.",
-    });
+    return res.status(500).json({ success: false, message: "Server error. Please try again later." });
   }
 };
+
 
 
 

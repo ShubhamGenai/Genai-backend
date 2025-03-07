@@ -44,7 +44,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
+app.use(cors())
 // Apply security, compression, and logging middleware
 app.use(helmet());
 app.use(compression());
