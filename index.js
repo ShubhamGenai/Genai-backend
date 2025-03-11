@@ -44,8 +44,11 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
 app.use(cors())
+
 // Apply security, compression, and logging middleware
+
 app.use(helmet());
 app.use(compression());
 app.use(bodyParser.json());
@@ -53,19 +56,20 @@ app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize())
 app.use(passport.session())
+
 // Static file hosting
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Basic route to verify server is working
+
 app.get("/", (req, res) => {
   res.json("Hello from the API!");
 });
 
 
-
- 
-
 // Error handling middleware
+
 app.use(errorHandler);
 
 // Redis client for caching and session management
@@ -75,6 +79,7 @@ redisClient.on("error", (err) => {
 });
 
 // MongoDB connection
+
 MongoDB();
 
 // Define routes
@@ -82,9 +87,6 @@ app.use("/api/auth", authRoute);
 app.use("/api/content", contentRoute);
 app.use("/api/admin", adminRoute);
 app.use("/api/employer", employerRoute);
-
-
-
 
 
 
@@ -103,10 +105,14 @@ app.use("/api/employer", employerRoute);
 //   });
 
 // } else {
+
   // App listening on specified port
+
   const PORT = process.env.PORT || 8080;
   app.listen(PORT, () => {
     console.log(` listening on port ${PORT}`);
+
   });
+
 // }
 

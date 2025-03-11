@@ -1,14 +1,17 @@
-import Notification from "../models/adminNotificationModel.js";
+const Notification = require("../models/adminNotificationModel"); // Corrected import
 
-
-const sendAdminNotification = async (type, message) => {
+async function sendAdminNotification(type, message) {
   try {
+    if (!type || !message) {
+      throw new Error("Notification type and message are required");
+    }
+
     // Save notification in MongoDB
-    await Notification.create({ type, message });
-
+    const newNotification = new Notification({ type, message });
+    await newNotification.save();
   } catch (error) {
-    console.error("Error saving admin notification:", error);
+    console.error("Error saving admin notification:", error.message);
   }
-};
+}
 
-export default sendAdminNotification
+module.exports = sendAdminNotification; // ✅ Corrected export

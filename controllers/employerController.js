@@ -3,10 +3,9 @@ const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const dotenv = require("dotenv");
 const express = require("express");
-
-const sendAdminNotification = require("../utils/SendAdminNotification");
 const { Employer, Whitelist } = require("../models/EmployerModel");
-
+const  {Notification} = require("../models/adminNotificationModel");
+const sendAdminNotification = require("../utils/sendAdminNotification")
 dotenv.config();
 
 
@@ -20,85 +19,129 @@ const validCompanies = async (req, res) => {
     }
   }
 
-
   const employerEmailVerify = async (req, res) => {
-    console.log("Incoming request body:", req.body);
-
     const { email } = req.body;
+  
     if (!email) {
-        return res.status(400).json({ message: "Email is required" });
+      return res.status(400).json({ message: "Email is required" });
     }
-
+  
     const domain = email.split("@")[1];
-
+  
     try {
-     
-
-        // Check if employer email already exists
-        let existingEmployer = await Employer.findOne({ email });
-        if (existingEmployer) {
-            return res.status(400).json({ message: "User already exists" });
+      // 🔹 Check if employer email already exists
+      let existingEmployer = await Employer.findOne({ email });
+  
+      if (existingEmployer) {
+        if (existingEmployer.isVerified) {
+          return res.status(400).json({ message: "User already exists" }); // ❌ Block verified users
         }
-
-        // Check if domain is in whitelist
-        let company = await Whitelist.findOne({ domain });
-
-        if (!company) {
-            await sendAdminNotification("info", `Unapproved Domain: ${domain}`);
-            return res.status(400).json({
-                message: "Your company domain is not whitelisted. Admin has been notified.",
-            });
+        // If user exists but is NOT verified, continue the process
+      }
+  
+      // 🔹 Check if domain is in whitelist
+      let company = await Whitelist.findOne({ domain });
+  
+      if (!company) {
+        // ❌ If domain is NOT found, create an unapproved entry
+        company = new Whitelist({ domain, approved: false,  }); // Added verified field
+        await company.save();
+  
+        // 🔹 Check if a notification for this domain already exists
+        let existingNotification = await Notification.findOne({ message: `New unapproved domain added: ${domain}` });
+  
+        if (existingNotification) {
+          // 🔄 Update existing notification timestamp
+          await Notification.updateOne(
+            { message: `New unapproved domain added: ${domain}` },
+            { $set: { createdAt: Date.now(), status: "unread" } }
+          );
+        } else {
+          // ✅ Create a new notification
+          await sendAdminNotification("info", `New unapproved domain added: ${domain}`);
         }
-
-        if (!company.approved) {
-            return res.status(403).json({ message: "Your company domain is pending approval." });
-        }
-
-        // ✅ Save employer email in the database
-        const newEmployer = new Employer({ email });
+  
+        return res.status(400).json({
+          message: "Your company domain is not approved yet. Admin has been notified.",
+        });
+      }
+  
+      // ❌ If domain exists but is NOT approved, block registration and notify admin
+      if (!company.approved) {
+        return res.status(400).json({
+          message: "Your company domain is not approved yet. Please wait for admin approval.",
+        });
+      }
+  
+      // ✅ Save employer email in the database (either new or updating an unverified one)
+      if (existingEmployer) {
+        // existingEmployer.isVerified = true;
+        await existingEmployer.save();
+      } else {
+        const newEmployer = new Employer({ email});
         await newEmployer.save();
-
-        res.status(201).json({ message: "Email saved successfully" });
-
+      }
+  
+      res.status(200).json({ message: "Email verification successful" });
+  
     } catch (error) {
-        console.error("Error in employerEmailVerify:", error); // Log error details
-        res.status(500).json({ message: "Error processing request", error: error.message });
+      console.error("Error in employerEmailVerify:", error);
+      res.status(500).json({ message: "Error processing request", error: error.message });
     }
-};
-
+  };
+  
+  
 
   
 
 
-
 const employerRegistration = async (req, res) => {
-  const { email, password, companyName } = req.body;
-
   try {
-    // Check if employer exists
-    let employer = await Employer.findOne({ email });
+      
 
-    if (!employer) {
-      return res.status(404).json({ message: "Employer not found. Please verify your email first." });
-    }
+      const { email, password, companyName } = req.body;
 
-    // Hash the new password before saving
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+      if (!email || !password || !companyName) {
+         
+          return res.status(400).json({ message: "All fields are required" });
+      }
 
-    // Update employer details
-    employer.password = hashedPassword;
-    employer.companyName = companyName;
-    employer.isVerified = true; // Mark as verified after completing registration
+  
+      let employer = await Employer.findOne({ email });
 
-    await employer.save();
+      if (employer) {
+        
+          employer.password = password;
+          employer.companyName = companyName;
+          employer.isVerified = true;
 
-    res.status(200).json({ message: "Registration completed successfully" });
+          await employer.save();
+      
+          return res.status(200).json({ message: "Employer details updated successfully" });
+      }
+
+     
+      const newEmployer = new Employer({
+          email,
+          password,
+          companyName,
+          isVerified: true,
+      });
+
+      await newEmployer.save();
+   
+
+      res.status(201).json({ message: "Registration successful" });
+
   } catch (error) {
-    console.error("Error in employer registration:", error);
-    res.status(500).json({ message: "Error registering employer" });
+      console.error("❌ Error in employerRegistration:", error);
+      res.status(500).json({ message: "Error processing request", error: error.message });
   }
 };
+
+
+
+  
 
     module.exports = {
         

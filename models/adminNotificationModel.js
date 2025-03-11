@@ -1,14 +1,12 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const notificationSchema = new mongoose.Schema(
   {
-    type: { type: String, enum: ["error", "success", "info"], required: true }, //type of notification
+    type: { type: String, enum: ["error", "success", "info"], required: true }, // Type of notification
     message: { type: String, required: true }, // Notification content
     status: { type: String, enum: ["unread", "read"], default: "unread" },
-    createdAt: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  { timestamps: true } // Automatically adds createdAt & updatedAt
 );
 
-const Notification = mongoose.model("Notification", notificationSchema);
-export default Notification;
+module.exports = mongoose.model("Notification", notificationSchema);
