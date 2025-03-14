@@ -1,36 +1,14 @@
-import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
+const mongoose = require("mongoose");
 
-// Whitelist Schema
-const WhitelistSchema = new mongoose.Schema({
-  domain: { type: String, unique: true, required: true },
-  approved: { type: Boolean, default: false },
-});
-
-const Whitelist = mongoose.model("Whitelist", WhitelistSchema);
-
-// Employer Schema
-const employerSchema = new mongoose.Schema(
+const EmployerSchema = new mongoose.Schema(
   {
-    companyName: { type: String },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, },
-    isVerified: { type: Boolean, default: false },
-    isAdminVerified: { type: Boolean, default: false },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    companyName: { type: String,  },
+    domain: { type: String, },
     isDomainVerified: { type: Boolean, default: false },
-    role: { type: String, enum: ["employer", "admin"], default: "employer" },
   },
   { timestamps: true }
 );
 
-// Hash password before saving
-employerSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
-
-const Employer = mongoose.model("Employer", employerSchema);
-
-// ✅ Export both models
-export { Whitelist, Employer };
+const Employer = mongoose.model("Employer", EmployerSchema);
+module.exports = Employer;

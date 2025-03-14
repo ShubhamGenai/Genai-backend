@@ -1,4 +1,5 @@
 const User = require("../models/UserModel");
+const Student = require("../models/studentSchema")
 const { sendOtpEmail } = require('../utils/emailOTP');
 const bcrypt = require('bcryptjs');
 const jwt = require("jsonwebtoken")
@@ -8,97 +9,130 @@ dotenv.config();
 require('../config/passport');
 const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
+const Employer = require("../models/EmployerModel");
 const client = new OAuth2Client(process.env.CLIENTID);
 
+
+
 const registerUser = async (req, res) => {
-
-
-  const { fullName, email, password, role } = req.body;
-
-  if (!fullName || !email || !password || !role) {
-    return res.status(400).json({ success: false, message: "All fields are required." });
-  }
-
   try {
+    const { fullName, email, password } = req.body;
+
+    // ✅ Validate input
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ success: false, message: "Name, Email, and Password are required." });
+    }
+
+    // ✅ Check if user already exists
     let user = await User.findOne({ email });
 
     if (user) {
-      if (user.isVerified) {
+      if (user.isProfileVerified) {
         return res.status(400).json({ success: false, message: "User already exists and is verified." });
       }
 
-      // If user exists but is not verified, update details
+      // ✅ Update details for unverified users
       user.name = fullName;
       user.password = await bcrypt.hash(password, 10);
-      user.role = role;
+      user.role = "student";
 
-      // Generate a new OTP
+      // ✅ Generate new OTP
       user.otp = Math.floor(100000 + Math.random() * 900000).toString();
+      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-      // Save the updated user and send OTP in parallel
       await Promise.all([user.save(), sendOtpEmail(email, user.otp)]);
 
       return res.status(200).json({
         success: true,
-        message: "User information updated. A new OTP has been sent to your email. Please verify your account."
+        message: "User information updated. A new OTP has been sent to your email. Please verify your account.",
       });
     }
 
-    // If no existing user, create a new one
+    // ✅ Hash password securely
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    user = new User({
+    // ✅ Create a new user
+    const newUser = new User({
       name: fullName,
       email,
       password: hashedPassword,
-      role,
-      isVerified: false,
+      role: "student",
       otp: Math.floor(100000 + Math.random() * 900000).toString(),
+      otpExpires: new Date(Date.now() + 10 * 60 * 1000),
     });
 
-    // Save the new user and send OTP in parallel
-    await Promise.all([user.save(), sendOtpEmail(email, user.otp)]);
+    await newUser.save();
 
-    res.status(201).json({
+    // ✅ Send OTP Email
+    await sendOtpEmail(email, newUser.otp);
+
+    return res.status(201).json({
       success: true,
-      message: "User registered successfully. OTP sent to your email. Please verify your account.",
+      message: "Registration successful. Please verify your email using the OTP sent.",
     });
 
   } catch (error) {
-    console.error("Error during registration:", error);
-    res.status(500).json({ success: false, message: "Server error. Please try again later." });
+    console.error("Error in registerStudent:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 
 const verifyOtp = async (req, res) => {
-  const { email, otp } = req.body;
-
   try {
-    // Find the user by email
+    const { email, otp } = req.body;
+
+    // ✅ Validate input
+    if (!email || !otp) {
+    
+      return res.status(400).json({ success: false, message: "Email and OTP are required." });
+    }
+
+    // ✅ Find user by email
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({ success: false, message: 'User not found' });
+     
+      return res.status(404).json({ success: false, message: "User not found." });
     }
 
-    // Check if OTP matches
-    if (user.otp === otp) {
-      // Mark user as verified
-      user.isVerified = true;
-      user.isEmailVerified = true;
-      user.otp = null;  // Clear the OTP after successful verification
-
-      // Save the user's updated status
-      await user.save();
-
-      return res.status(200).json({ success: true, message: 'OTP verified successfully' });
-    } else {
-      return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    // ✅ Check OTP expiration
+    if (!user.otp || user.otpExpires < Date.now()) {
+    
+      return res.status(400).json({ success: false, message: "OTP has expired. Please request a new one." });
     }
+
+    // ✅ Verify OTP
+    if (user.otp !== otp) {
+      
+      return res.status(400).json({ success: false, message: "Invalid OTP. Please try again." });
+    }
+
+    // ✅ Mark user as verified
+    user.isEmailVerified = true;
+    user.isVerified = true;
+    user.otp = null; // Clear OTP
+    user.otpExpires = null;
+
+    await user.save();
+ 
+
+    // ✅ If role is "student", create a student profile if not exists
+    if (user.role === "student") {
+      const existingStudent = await Student.findOne({ userId: user._id });
+
+      if (!existingStudent) {
+        const newStudent = new Student({ userId: user._id });
+        await newStudent.save();
+       
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "OTP verified successfully!" });
+
   } catch (error) {
-    console.error('Error during OTP verification:', error);
-    return res.status(500).json({ success: false, message: 'Server error. Please try again later.' });
+   
+    return res.status(500).json({ success: false, message: "Server error. Please try again later." });
   }
 };
 
@@ -148,7 +182,7 @@ const completeProfile = async (req, res) => {
 
 
 const loginUser = async (req, res) => {
-  console.log("Login Request:", req.body);
+
 
   const { email, password } = req.body;
   if (!email || !password) {
@@ -170,6 +204,10 @@ const loginUser = async (req, res) => {
       // Check verification status
       if (!user.isVerified) {
         return { status: 403, message: "Please verify your account via email." };
+      }
+
+      if (user.role !== "student") {
+        return { status: 403, message: "Please verify your account No student registered with this email" };
       }
 
       // Generate JWT
@@ -313,18 +351,36 @@ const googleCallback = (req, res) => {
 
 
 const getUserDetails = async (req, res) => {
-  console.log("here");
-  
-
   try {
-    const user = await User.findById(req.user.id).select('-password');
-    
-    res.status(200).json({ user });
+    console.log("Fetching user details...");
+
+    // 🔹 Fetch base user data
+    const baseUser = await User.findById(req.user.id).select("-password -__v").lean();
+    if (!baseUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let additionalDetails = {};
+
+    // 🔹 Fetch additional details based on user role
+    if (baseUser.role === "employer") {
+      additionalDetails = await Employer.findOne({ userId: req.user.id }).lean();
+    } else if (baseUser.role === "student") {
+      additionalDetails = await Student.findOne({ userId: req.user.id }).lean();
+    }
+
+    res.status(200).json({
+      user: {
+        ...baseUser, // 🔹 Includes email, role, etc.
+        details: additionalDetails || null, // 🔹 Includes employer/student-specific details
+      },
+    });
+
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error fetching user details:", error);
+    res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
-
 
 
 
