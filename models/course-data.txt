@@ -1,0 +1,76 @@
+
+// to add a complete course  use this  method
+
+
+{
+  "title": "MERN Stack Development",
+  "description": "Full-stack development with MongoDB, Express, React, and Node.js.",
+  "price": 199,
+  "category": "Web Development",
+  "instructor": "60d0fe4f5311236168a109ca",
+  "imageUrl": "https://example.com/web-dev-course.jpg",
+  "level": "Intermediate",
+  "modules": [
+    {
+      "title": "Module 1: Introduction to Web Development",
+      "lessons": [
+        {
+          "title": "Lesson 1: What is Web Development?",
+          "videoUrl": "https://example.com/intro.mp4",
+          "duration": 15,
+          "practiceQuestions": [
+            { "question": "What is frontend development?", "description": "Explain frontend development." },
+            { "question": "What is backend development?", "description": "Describe backend development." }
+          ],
+          "quizzes": [
+            {
+              "title": "Quiz 1: Basics of Web Development",
+              "questions": [
+                { "questionText": "What language is used for frontend?", "options": ["Python", "JS"], "answer": "JS" },
+                { "questionText": "What does HTML stand for?", "options": ["HyperText", "HighText"], "answer": "HyperText" }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Lesson 2: Understanding HTML and CSS",
+          "videoUrl": "https://example.com/html-css.mp4",
+          "duration": 20,
+          "practiceQuestions": [
+            { "question": "What is HTML?", "description": "Describe HTML structure." },
+            { "question": "What is CSS?", "description": "Explain how CSS is used for styling." }
+          ],
+          "quizzes": [
+            {
+              "title": "Quiz 2: HTML & CSS Basics",
+              "questions": [
+                { "questionText": "What does CSS stand for?", "options": ["Cascading Style Sheets", "Computer Style System"], "answer": "Cascading Style Sheets" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Module 2: JavaScript Fundamentals",
+      "lessons": [
+        {
+          "title": "Lesson 1: Introduction to JavaScript",
+          "videoUrl": "https://example.com/js-intro.mp4",
+          "duration": 25,
+          "practiceQuestions": [
+            { "question": "What is JavaScript?", "description": "Explain JavaScript basics." }
+          ],
+          "quizzes": [
+            {
+              "title": "Quiz 1: JavaScript Basics",
+              "questions": [
+                { "questionText": "What is a variable in JavaScript?", "options": ["A storage unit", "A function"], "answer": "A storage unit" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

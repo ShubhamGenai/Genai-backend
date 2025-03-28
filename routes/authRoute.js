@@ -19,6 +19,10 @@ router.get("/google",authController.googlelogin)
 router.get('/google/callback', authController.googleCallback);
 
 
+router.post("/admin-signup",authController.registerAdmin)
+router.post("/admin-signin",authController.adminSignIn)
+
+
 router.get("/userDetails",authMiddleware,authController.getUserDetails)
 
 

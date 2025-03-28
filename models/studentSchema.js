@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { Schema, Types } = mongoose; 
 
 const StudentSchema = new mongoose.Schema(
   {
@@ -6,6 +7,9 @@ const StudentSchema = new mongoose.Schema(
     qualification: { type: String, trim: true,  },
     interests: { type: [String], trim: true },
     contact: { type: String, trim: true }, // Optional contact number
+
+    enrolledCourses: [{ type: Types.ObjectId, ref: "Enrollment" }],
+    enrolledTests: [{ type: Types.ObjectId, ref: "Enrollment" }],
   
   },
   { timestamps: true }
