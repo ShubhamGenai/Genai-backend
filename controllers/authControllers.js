@@ -76,7 +76,11 @@ const registerUser = async (req, res) => {
     console.error("Error in registerStudent:", error);
     return res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
+
 };
+
+
+
 
 
 const verifyOtp = async (req, res) => {
@@ -136,6 +140,7 @@ const verifyOtp = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error. Please try again later." });
   }
 };
+
 
 
 const completeProfile = async (req, res) => {
@@ -334,6 +339,7 @@ const googleCallback = (req, res) => {
     }
 
     const { user, token } = userObj;  // Destructure user and token from the returned object
+
 
     req.logIn(user, (err) => {
       if (err) {

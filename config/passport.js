@@ -2,6 +2,7 @@ const passport = require('passport');
 const User = require('../models/UserModel');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const jwt = require('jsonwebtoken');
+const Student = require('../models/studentSchema');
 const dotenv = require('dotenv').config();
 
 passport.use(
@@ -29,14 +30,24 @@ passport.use(
       const newUser = await new User({
         name: profile.displayName,
         email: profile.emails[0].value,
-        contact: phoneNumber, 
-        isVerified: true,
-        isEmailVerified: true,
-        isProfileVerified: false,
+        isEmailVerified : true,
+        isVerified : true,
+         otp : null,
+        otpExpires : null,
         role:"student",
-        otp: null,
+      
         password:"wertyui124aasauu677hh"
       }).save();
+
+         if (newUser.role === "student") {
+            const existingStudent = await Student.findOne({ userId: newUser._id });
+      
+            if (!existingStudent) {
+              const newStudent = new Student({ userId: newUser._id });
+              await newStudent.save();
+             
+            }
+          }
 
       const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
         expiresIn: '1h', // Adjust token expiry as needed
