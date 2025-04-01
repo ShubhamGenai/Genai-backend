@@ -6,21 +6,9 @@ const TestSchema = new mongoose.Schema(
     description: { type: String, required: true, trim: true },
     price: { type: Number, required: true }, // Test price
     category: { type: String, trim: true }, // Test category
-    instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // Instructor
+    instructor: { type: String, ref: "User", required: true }, // Instructor
 
-    sections: [
-      {
-        title: { type: String, required: true, trim: true },
-        questions: [
-          {
-            question: { type: String, required: true, trim: true },
-            options: [{ type: String, required: true }],
-            correctAnswer: { type: String, required: true },
-            explanation: { type: String, trim: true } // Explanation for correct answer
-          }
-        ]
-      }
-    ],
+    quizzes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Quiz" }] ,// References Quiz Model
 
     enrolledStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }], // Students who enrolled
 

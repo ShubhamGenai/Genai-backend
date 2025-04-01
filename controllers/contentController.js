@@ -2,6 +2,7 @@ const Course = require("../models/courseModel/courseModel");
 const Lesson = require("../models/courseModel/lessons");
 const Quiz = require("../models/courseModel/quiz");
 const Module = require("../models/courseModel/module");
+const Test = require("../models/testModel/testModel");
 
 const addCourse = async (req, res) => {
   try {
@@ -79,10 +80,6 @@ const addCourse = async (req, res) => {
 
 
 
-
-
-
-
 const addLesson = async (req, res) => {
   try {
     const { title, videoUrl, duration, practiceQuestions, quizzes } = req.body;
@@ -142,6 +139,46 @@ const addModule = async (req, res) => {
 
     res.status(201).json({ message: "Module created successfully", module: newModule });
   } catch (error) {
+
+    res.status(400).json({ error: error.message });
+
+  }
+};
+
+
+
+const addTest = async (req, res) => {
+  try {
+    const { title, description, price, category, instructor, quizzes, passingScore } = req.body;
+
+    let quizIds = [];
+    let totalMarks = 0;
+
+    // ✅ Save multiple quizzes and calculate total marks
+    for (const quizData of quizzes) {
+      const newQuiz = new Quiz(quizData);
+      await newQuiz.save();
+
+      quizIds.push(newQuiz._id); // Store Quiz ObjectId
+      totalMarks += quizData.questions.length * 10; // Assume each question carries 10 marks
+    }
+
+    // ✅ Create and save test with calculated totalMarks
+    const newTest = new Test({
+      title,
+      description,
+      price,
+      category,
+      instructor,
+      quizzes: quizIds,
+      passingScore,
+      totalMarks, // Dynamically calculated
+    });
+
+    await newTest.save();
+
+    res.status(201).json({ message: "Test created successfully", test: newTest });
+  } catch (error) {
     res.status(400).json({ error: error.message });
   }
 };
@@ -152,4 +189,5 @@ const addModule = async (req, res) => {
   module.exports = {addCourse,
     addLesson,
     addModule,
+    addTest,
   }

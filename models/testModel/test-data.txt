@@ -1,0 +1,24 @@
+{
+  "title": "JavaScript Fundamentals Test",
+  "description": "Test your JavaScript knowledge.",
+  "price": 199,
+  "category": "Programming",
+  "instructor": "660d0fe4f5311236168a109ca",
+  "quizzes": [
+    {
+      "title": "Quiz 1: JavaScript Basics",
+      "questions": [
+        { "questionText": "What is a variable?", "options": ["Storage", "Loop"], "answer": "Storage" },
+        { "questionText": "What is an array?", "options": ["List", "String"], "answer": "List" }
+      ]
+    },
+    {
+      "title": "Quiz 2: JS Functions",
+      "questions": [
+        { "questionText": "What is a function?", "options": ["Method", "Variable"], "answer": "Method" },
+        { "questionText": "What does return do?", "options": ["Exit", "Output"], "answer": "Output" }
+      ]
+    }
+  ],
+  "passingScore": 40
+}
