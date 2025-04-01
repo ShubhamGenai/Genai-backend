@@ -183,6 +183,26 @@ const addTest = async (req, res) => {
   }
 };
 
+
+const addQuiz = async (req, res) => {
+  try {
+    const { title, questions } = req.body;
+
+    // ✅ Validate data
+    if (!title || !questions || questions.length === 0) {
+      return res.status(400).json({ error: "Title and at least one question are required." });
+    }
+
+    // ✅ Save the quiz
+    const newQuiz = new Quiz({ title, questions });
+    await newQuiz.save();
+
+    res.status(201).json({ message: "Quiz added successfully", quiz: newQuiz });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
   
 
 
@@ -190,4 +210,5 @@ const addTest = async (req, res) => {
     addLesson,
     addModule,
     addTest,
+    addQuiz,
   }

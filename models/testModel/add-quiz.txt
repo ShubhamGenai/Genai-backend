@@ -1,0 +1,17 @@
+
+
+{
+  "title": "JavaScript Basics Quiz",
+  "questions": [
+    {
+      "questionText": "What is a variable?",
+      "options": ["Storage", "Loop", "Function", "Object"],
+      "answer": "Storage"
+    },
+    {
+      "questionText": "What is an array?",
+      "options": ["List", "String", "Function", "Object"],
+      "answer": "List"
+    }
+  ]
+}
