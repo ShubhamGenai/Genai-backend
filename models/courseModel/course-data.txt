@@ -78,26 +78,4 @@
 
 
 
-// MODULE ADDING 
 
-
-{
-  "title": "Module 1: JavaScript Basics",
-  "lessons": [
-    {
-      "title": "Lesson 1: Introduction to JavaScript",
-      "videoUrl": "https://example.com/js-intro.mp4",
-      "duration": 20,
-      "practiceQuestions": [
-        { "question": "What is JavaScript?", "description": "Explain JavaScript basics." }
-      ],
-      "quizzes": [
-        {
-          "question": "What is JavaScript used for?",
-          "options": ["Backend", "Frontend", "Both", "None"],
-          "answer": "Both"
-        }
-      ]
-    }
-  ]
-}
