@@ -1,6 +1,9 @@
+const Course = require("../models/courseModel/courseModel");
+const Test = require("../models/testModel/testModel");
+
 const getCourses = async (req, res) => {
     try {
-      const courses = await Course.find().populate("modules"); // Populate modules if needed
+      const courses = await Course.find(); // Populate modules if needed
       res.status(200).json(courses);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -20,7 +23,7 @@ const getCourses = async (req, res) => {
   // ✅ Fetch a single course by ID
   const getCourseById = async (req, res) => {
     try {
-      const course = await Course.findById(req.params.id).populate("modules");
+      const course = await Course.findById(req.params.id);
       if (!course) {
         return res.status(404).json({ error: "Course not found" });
       }
@@ -33,7 +36,7 @@ const getCourses = async (req, res) => {
   // ✅ Fetch a single test by ID
   const getTestById = async (req, res) => {
     try {
-      const test = await Test.findById(req.params.id).populate("quizzes");
+      const test = await Test.findById(req.params.id);
       if (!test) {
         return res.status(404).json({ error: "Test not found" });
       }
