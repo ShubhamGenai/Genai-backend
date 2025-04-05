@@ -46,7 +46,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-app.use(cors())
+// app.use(cors())
 
 // Apply security, compression, and logging middleware
 

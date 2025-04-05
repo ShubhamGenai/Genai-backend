@@ -10,7 +10,7 @@ require('../config/passport');
 const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
 const Employer = require("../models/EmployerModel");
-const Admin = require("../models/AdminModel");
+const Admin = require("../models/adminModel");
 const client = new OAuth2Client(process.env.CLIENTID);
 
 
