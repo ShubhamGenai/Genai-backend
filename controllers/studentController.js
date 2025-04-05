@@ -13,8 +13,18 @@ const getCourses = async (req, res) => {
   // ✅ Fetch all tests
   const getTests = async (req, res) => {
     try {
-      const tests = await Test.find().populate("quizzes"); // Populate quizzes if needed
+      const tests = await Test.find() // Populate quizzes if needed
       res.status(200).json(tests);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+
+  const getTestCategories = async (req, res) => {
+    try {
+      const categories = await Test.distinct("category");
+      res.status(200).json(categories);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -32,9 +42,13 @@ const getCourses = async (req, res) => {
       res.status(500).json({ error: error.message });
     }
   };
+
+
   
   // ✅ Fetch a single test by ID
   const getTestById = async (req, res) => {
+    console.log(req.params.id);
+    
     try {
       const test = await Test.findById(req.params.id);
       if (!test) {
@@ -51,4 +65,5 @@ const getCourses = async (req, res) => {
     getTests,
     getCourseById,
     getTestById,
+    getTestCategories
   };

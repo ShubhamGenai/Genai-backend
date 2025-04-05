@@ -4,6 +4,9 @@
   "price": 199,
   "category": "Programming",
   "instructor": "660d0fe4f5311236168a109ca",
+  "duration":2,
+  "level:"hard",
+  
   "quizzes": [
     {
       "title": "Quiz 1: JavaScript Basics",

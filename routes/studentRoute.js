@@ -8,4 +8,8 @@ router.get("./getCurses",studentController.getCourses)
 router.get("/getTestById/:id",studentController.getTestById)
 router.get("/getCourseById/:id",studentController.getCourseById)
 
+router.get("/getTestCategories",studentController.getTestCategories)
+
+
+
 module.exports = router

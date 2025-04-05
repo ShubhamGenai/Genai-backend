@@ -145,34 +145,92 @@ const addModule = async (req, res) => {
   }
 };
 
+//without ratings and reviews
 
+// const addTest = async (req, res) => {
+//   try {
+//     const { title, description, price, category, instructor, quizzes, passingScore } = req.body;
+
+//     let quizIds = [];
+//     let totalMarks = 0;
+
+//     // ✅ Save multiple quizzes and calculate total marks
+//     for (const quizData of quizzes) {
+//       const newQuiz = new Quiz(quizData);
+//       await newQuiz.save();
+
+//       quizIds.push(newQuiz._id); // Store Quiz ObjectId
+//       totalMarks += quizData.questions.length * 10; // Assume each question carries 10 marks
+//     }
+
+//     // ✅ Create and save test with calculated totalMarks
+//     const newTest = new Test({
+//       title,
+//       description,
+//       price,
+//       category,
+//       instructor,
+//       quizzes: quizIds,
+//       passingScore,
+//       totalMarks, // Dynamically calculated
+//     });
+
+//     await newTest.save();
+
+//     res.status(201).json({ message: "Test created successfully", test: newTest });
+//   } catch (error) {
+//     res.status(400).json({ error: error.message });
+//   }
+// };
 
 const addTest = async (req, res) => {
   try {
-    const { title, description, price, category, instructor, quizzes, passingScore } = req.body;
+    const {
+      title,
+      description,
+      price,
+      category,
+      instructor,
+      quizzes,
+      passingScore,
+      level,
+      duration,
+      ratings = [] // optional: handle if ratings are not provided
+    } = req.body;
 
     let quizIds = [];
     let totalMarks = 0;
 
-    // ✅ Save multiple quizzes and calculate total marks
+    // Save multiple quizzes and calculate total marks
     for (const quizData of quizzes) {
       const newQuiz = new Quiz(quizData);
       await newQuiz.save();
 
-      quizIds.push(newQuiz._id); // Store Quiz ObjectId
-      totalMarks += quizData.questions.length * 10; // Assume each question carries 10 marks
+      quizIds.push(newQuiz._id);
+      totalMarks += quizData.questions.length * 10;
     }
 
-    // ✅ Create and save test with calculated totalMarks
+    // ✅ Calculate average rating
+    let averageRating = 0;
+    if (ratings.length > 0) {
+      const total = ratings.reduce((sum, r) => sum + r.rating, 0);
+      averageRating = total / ratings.length;
+    }
+
+    // Create and save test
     const newTest = new Test({
       title,
       description,
       price,
       category,
       instructor,
+      level, 
+      duration,
       quizzes: quizIds,
       passingScore,
-      totalMarks, // Dynamically calculated
+      totalMarks,
+      ratings,
+      averageRating
     });
 
     await newTest.save();
@@ -182,6 +240,7 @@ const addTest = async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 };
+
 
 
 const addQuiz = async (req, res) => {
