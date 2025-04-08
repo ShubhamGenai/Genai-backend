@@ -187,19 +187,28 @@ const addTest = async (req, res) => {
   try {
     const {
       title,
+      company,
       description,
-      price,
-      category,
+      duration,
+      numberOfQuestions,
+      price: { actual, discounted },
+      level,
+      features,
+      skills,
+      certificate,
       instructor,
       quizzes,
       passingScore,
-      level,
-      duration,
       ratings = [] // optional: handle if ratings are not provided
     } = req.body;
 
     let quizIds = [];
     let totalMarks = 0;
+
+    // Validate required fields
+    if (!title || !company || !description || !duration || !numberOfQuestions || !actual || !discounted || !level) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
     // Save multiple quizzes and calculate total marks
     for (const quizData of quizzes) {
@@ -210,34 +219,49 @@ const addTest = async (req, res) => {
       totalMarks += quizData.questions.length * 10;
     }
 
-    // ✅ Calculate average rating
+    // Calculate average rating and total reviews
     let averageRating = 0;
-    if (ratings.length > 0) {
+    const totalReviews = ratings.length;
+    if (totalReviews > 0) {
       const total = ratings.reduce((sum, r) => sum + r.rating, 0);
-      averageRating = total / ratings.length;
+      averageRating = total / totalReviews;
     }
 
     // Create and save test
     const newTest = new Test({
       title,
+      company,
       description,
-      price,
-      category,
-      instructor,
-      level, 
       duration,
+      numberOfQuestions,
+      price: {
+        actual,
+        discounted
+      },
+      level,
+      features: features || [],
+      skills: skills || [],
+      certificate: certificate !== undefined ? certificate : true,
+      instructor,
       quizzes: quizIds,
       passingScore,
       totalMarks,
       ratings,
-      averageRating
+      averageRating,
+      totalReviews
     });
 
     await newTest.save();
 
-    res.status(201).json({ message: "Test created successfully", test: newTest });
+    res.status(201).json({ 
+      message: "Test created successfully", 
+      test: newTest 
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error("Error creating test:", error);
+    res.status(400).json({ 
+      error: error.message || "Failed to create test" 
+    });
   }
 };
 

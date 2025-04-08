@@ -1,27 +1,81 @@
 {
-  "title": "JavaScript Fundamentals Test",
-  "description": "Test your JavaScript knowledge.",
-  "price": 199,
-  "category": "Programming",
-  "instructor": "660d0fe4f5311236168a109ca",
-  "duration":2,
-  "level:"hard",
-  
+  "title": "CSS Advance level Test One",
+  "company": "Company Name Private Limited",
+  "description": "This comprehensive CSS test is designed for absolute beginners as well as professionals looking to enhance their skills. By the end of this test, you will be able to analyze your CSS skills using industry-standard challenges.",
+  "duration": 60,
+  "numberOfQuestions": 40,
+  "price": {
+    "actual": 950,
+    "discounted": 620
+  },
+  "level": "Intermediate to Advanced",
+  "features": [
+    "Real-world CSS challenges",
+    "Instant results & score breakdown",
+    "Certificate upon passing",
+    "One free retake if failed"
+  ],
+  "skills": [
+    "CSS Animation",
+    "CSS Ellipsis",
+    "CSS Text Coloring",
+    "CSS Centering",
+    "CSS vertical-align",
+    "CSS object-fit"
+  ],
+  "certificate": true,
+  "instructor": "67e38bf056d1c1dd9fb80b35",
   "quizzes": [
     {
-      "title": "Quiz 1: JavaScript Basics",
+      "title": "CSS Advanced Concepts",
+      "duration":30,
       "questions": [
-        { "questionText": "What is a variable?", "options": ["Storage", "Loop"], "answer": "Storage" },
-        { "questionText": "What is an array?", "options": ["List", "String"], "answer": "List" }
+        {
+          "questionText": "What is the correct way to center a div horizontally and vertically using flexbox?",
+          "options": [
+            "display: flex; justify-content: center; align-items: center;",
+            "position: center;",
+            "text-align: center;",
+            "margin: auto;"
+          ],
+          "answer": "display: flex; justify-content: center; align-items: center;"
+        },
+        {
+          "questionText": "Which CSS property is used to create smooth animations?",
+          "options": [
+            "transition",
+            "animation",
+            "transform",
+            "smooth"
+          ],
+          "answer": "transition"
+        }
       ]
     },
     {
-      "title": "Quiz 2: JS Functions",
+      "title": "CSS Layout and Positioning",
+      "duration":30,
       "questions": [
-        { "questionText": "What is a function?", "options": ["Method", "Variable"], "answer": "Method" },
-        { "questionText": "What does return do?", "options": ["Exit", "Output"], "answer": "Output" }
+        {
+          "questionText": "What is the purpose of CSS object-fit property?",
+          "options": [
+            "To specify how an image or video should be resized to fit its container",
+            "To align objects in a container",
+            "To set object position",
+            "To fit text within a container"
+          ],
+          "answer": "To specify how an image or video should be resized to fit its container"
+        }
       ]
     }
   ],
-  "passingScore": 40
+  "passingScore": 70,
+  "ratings": [
+    {
+      "studentId": "67e001295bb8ea254983f40c",
+      "rating": 5,
+      "review": "Excellent test with practical challenges",
+      "createdAt": "2024-03-20T10:00:00.000Z"
+    }
+  ]
 }

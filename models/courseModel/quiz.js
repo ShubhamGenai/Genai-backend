@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const QuizSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
+  duration: { type: Number, required: true }, // Duration in minutes
   questions: [
     {
       questionText: { type: String, required: true, trim: true },
