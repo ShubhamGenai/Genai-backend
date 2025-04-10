@@ -1,6 +1,8 @@
 const Cart = require("../models/Cart");
 const Course = require("../models/courseModel/courseModel");
 const Test = require("../models/testModel/testModel");
+const Quiz = require("../models/courseModel/quiz");
+const SubmissionModel = require("../models/testModel/SubmissionModel");
 
 const getCourses = async (req, res) => {
     try {
@@ -48,7 +50,7 @@ const getCourses = async (req, res) => {
   
   // ✅ Fetch a single test by ID
   const getTestById = async (req, res) => {
-    console.log(req.params.id);
+  
     
     try {
       const test = await Test.findById(req.params.id);
@@ -163,6 +165,68 @@ const getCourses = async (req, res) => {
     }
   };
   
+  // code to fetch all quizzes inside a tset for test player
+
+  const getQuiz = async (req, res) => {
+    console.log("here");
+    
+    try {
+      const { ids } = req.body;
+      const quizzes = await Quiz.find({ _id: { $in: ids } }).populate({
+        path: 'questions',
+        select: 'questionText options answer' // include only these fields
+      })
+      if (!quizzes) {
+        return res.status(404).json({ message: 'Quiz not found' });
+      }
+  
+      res.status(200).json(quizzes);
+      
+    } catch (err) {
+      res.status(500).json({ message: 'Server error' });
+    }
+  }
+
+
+  const submitQuiz = async (req, res) => {
+    try {
+      const userId = req.user.id; // assuming user is authenticated
+      const {
+        quizIds,
+        answers,
+        startTime,
+        endTime,
+        duration,
+        markedQuestions
+      } = req.body;
+  
+      // Basic validation
+      if (!quizIds || !answers || !startTime || !endTime) {
+        return res.status(400).json({ message: 'Missing required fields' });
+      }
+  
+      // Save submission
+      const submission = new SubmissionModel({
+        user: userId,
+        quizIds,
+        answers,
+        startTime,
+        endTime,
+        duration,
+        markedQuestions
+      });
+  
+      await submission.save();
+  
+      res.status(201).json({
+        message: 'Quiz submitted successfully',
+        submissionId: submission._id
+      });
+    } catch (error) {
+      console.error('Quiz submission failed:', error);
+      res.status(500).json({ message: 'Server error while submitting quiz' });
+    }
+  };
 
   
   module.exports = {
@@ -174,5 +238,7 @@ const getCourses = async (req, res) => {
     addToCart,
     checkItemInCart,
     getCartTests,
-    removeFromCart
+    removeFromCart,
+    getQuiz,
+    submitQuiz
   };

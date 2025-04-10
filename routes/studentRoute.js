@@ -15,6 +15,8 @@ router.post("/addToCart",authMiddleware,studentController.addToCart)
 router.get("/checkitemCart",authMiddleware,studentController.checkItemInCart)
 router.get("/getCartTests",authMiddleware,studentController.getCartTests)
 router.delete("/removeFromCart",authMiddleware,studentController.removeFromCart)
+router.post("/getQuiz",studentController.getQuiz);
 
+router.post("/submitQuiz",authMiddleware,studentController.submitQuiz)
 
 module.exports = router

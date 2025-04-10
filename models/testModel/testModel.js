@@ -22,7 +22,12 @@ const TestSchema = new mongoose.Schema(
         "Real-world CSS challenges",
         "Instant results & score breakdown",
         "Certificate upon passing",
-        "One free retake if failed"
+        "One free retake if failed",
+        "Practical CSS Scenarios",
+        "Instant result & analytics",
+        "Certificate on passing",
+        "Try again for free if you fail"
+
       ]
     }],
     skills: [{
