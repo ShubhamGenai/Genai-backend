@@ -3,6 +3,13 @@ const Course = require("../models/courseModel/courseModel");
 const Test = require("../models/testModel/testModel");
 const Quiz = require("../models/courseModel/quiz");
 const SubmissionModel = require("../models/testModel/SubmissionModel");
+const paymentSchema = require("../models/paymentSchema");
+const Razorpay = require("razorpay");
+const dotenv = require("dotenv");
+const User = require("../models/UserModel");
+const Student = require("../models/studentSchema");
+dotenv.config();
+
 
 const getCourses = async (req, res) => {
     try {
@@ -228,6 +235,94 @@ const getCourses = async (req, res) => {
     }
   };
 
+
+
+  const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+  
+  // 1️⃣ Create Razorpay order
+  const createOrder = async (req, res) => {
+    const { testId } = req.body;
+    const userId = req.user?.id || req.user?._id;
+  
+    try {
+      const test = await Test.findById(testId);
+      if (!test) return res.status(404).json({ message: "Test not found" });
+  
+      // 🛠️ Properly fetch the Student using the userId
+      const student = await Student.findOne({ userId });
+      if (!student) return res.status(404).json({ message: "Student not found" });
+  
+      const amount = test.price.discounted;
+  
+      const order = await razorpay.orders.create({
+        amount: amount * 100,
+        currency: "INR",
+        receipt: `receipt_${Date.now()}`
+      });
+  
+      // 💾 Create payment record
+      const payment = await paymentSchema.create({
+        userId: userId,
+        student: student._id,
+        test: testId,
+        razorpayOrderId: order.id,
+        amount,
+      });
+  
+      res.status(201).json({ order, paymentId: payment._id });
+    } catch (err) {
+      res.status(500).json({ message: "Error creating order", error: err.message });
+    }
+  };
+  
+  
+  // 2️⃣ Verify payment
+ const verifyPayement = async (req, res) => {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      paymentId
+    } = req.body;
+  
+    const generated_signature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
+  
+    const isAuthentic = generated_signature === razorpay_signature;
+  
+    if (!isAuthentic) {
+      return res.status(400).json({ success: false, message: "Payment verification failed" });
+    }
+  
+    try {
+      const payment = await paymentSchema.findByIdAndUpdate(paymentId, {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        status: "paid",
+      }, { new: true });
+  
+      // Optional: Enroll student to test
+      const student = await Student.findById(payment.student);
+      if (!student.enrolledTests.includes(payment.test)) {
+        student.enrolledTests.push(payment.test);
+        await student.save();
+      }
+  
+      res.json({ success: true, message: "Payment verified", payment });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Error verifying payment", error: err.message });
+    }
+  }
+  
+
+
+
+
   
   module.exports = {
     getCourses,
@@ -240,5 +335,7 @@ const getCourses = async (req, res) => {
     getCartTests,
     removeFromCart,
     getQuiz,
-    submitQuiz
+    submitQuiz,
+    createOrder,
+    verifyPayement
   };
