@@ -20,6 +20,6 @@ router.post("/getQuiz",studentController.getQuiz);
 router.post("/submitQuiz",authMiddleware,studentController.submitQuiz)
 
 router.post("/create-payment",authMiddleware,studentController.createOrder);
-router.post("/verify-payment",authMiddleware,studentController.verifyPayement);
+router.post("/verify-payment",authMiddleware,studentController.verifyPayment);
 
 module.exports = router

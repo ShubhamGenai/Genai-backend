@@ -37,7 +37,7 @@ const TestSchema = new mongoose.Schema(
     certificate: { type: Boolean, default: true },
     instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     quizzes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Quiz" }],
-    enrolledStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
+    enrolledStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "user" }],
     ratings: [
       {
         studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },

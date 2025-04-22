@@ -8,6 +8,8 @@ const Razorpay = require("razorpay");
 const dotenv = require("dotenv");
 const User = require("../models/UserModel");
 const Student = require("../models/studentSchema");
+const crypto = require('crypto');
+const EnrolledTest = require("../models/testModel/enrolledTest");
 dotenv.config();
 
 
@@ -280,7 +282,9 @@ const getCourses = async (req, res) => {
   
   
   // 2️⃣ Verify payment
- const verifyPayement = async (req, res) => {
+  const verifyPayment = async (req, res) => {
+    console.log(req.body);
+  
     const {
       razorpay_order_id,
       razorpay_payment_id,
@@ -300,24 +304,43 @@ const getCourses = async (req, res) => {
     }
   
     try {
+      // 1. Update payment status
       const payment = await paymentSchema.findByIdAndUpdate(paymentId, {
         razorpayPaymentId: razorpay_payment_id,
         razorpaySignature: razorpay_signature,
         status: "paid",
       }, { new: true });
   
-      // Optional: Enroll student to test
-      const student = await Student.findById(payment.student);
-      if (!student.enrolledTests.includes(payment.test)) {
-        student.enrolledTests.push(payment.test);
+      const studentId = payment.student;
+      const testId = payment.test;
+  
+      // 2. Enroll student to test
+      const student = await Student.findById(studentId);
+      if (!student.enrolledTests.includes(testId)) {
+        student.enrolledTests.push(testId);
         await student.save();
       }
   
-      res.json({ success: true, message: "Payment verified", payment });
+      // ✅ 3. Update the Test model to store student ID
+      const test = await Test.findById(testId);
+      if (!test.enrolledStudents.includes(req.user.id)) {
+        test.enrolledStudents.push(req.user.id);
+        await test.save();
+      }
+  
+      // 4. Optionally create EnrolledTest record if you're tracking more data
+      await EnrolledTest.create({
+        studentId,
+        testId,
+        paymentStatus: "completed",
+      });
+  
+      res.json({ success: true, message: "Payment verified and student enrolled", payment });
+  
     } catch (err) {
       res.status(500).json({ success: false, message: "Error verifying payment", error: err.message });
     }
-  }
+  };
   
 
 
@@ -337,5 +360,5 @@ const getCourses = async (req, res) => {
     getQuiz,
     submitQuiz,
     createOrder,
-    verifyPayement
+    verifyPayment
   };
