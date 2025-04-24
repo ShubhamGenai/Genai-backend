@@ -13,7 +13,7 @@ const EnrolledTest = require("../models/testModel/enrolledTest");
 dotenv.config();
 
 
-const getCourses = async (req, res) => {
+const getCourse = async (req, res) => {
     try {
       const courses = await Course.find(); // Populate modules if needed
       res.status(200).json(courses);
@@ -341,14 +341,15 @@ const getCourses = async (req, res) => {
       res.status(500).json({ success: false, message: "Error verifying payment", error: err.message });
     }
   };
-  
+
+
 
 
 
 
   
   module.exports = {
-    getCourses,
+   
     getTests,
     getCourseById,
     getTestById,
@@ -360,5 +361,6 @@ const getCourses = async (req, res) => {
     getQuiz,
     submitQuiz,
     createOrder,
-    verifyPayment
+    verifyPayment,
+    getCourse
   };
