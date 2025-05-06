@@ -10,6 +10,8 @@ const User = require("../models/UserModel");
 const Student = require("../models/studentSchema");
 const crypto = require('crypto');
 const EnrolledTest = require("../models/testModel/enrolledTest");
+const Module = require("../models/courseModel/module");
+const { default:mongoose } = require("mongoose");
 dotenv.config();
 
 
@@ -49,7 +51,9 @@ const getCourse = async (req, res) => {
       if (!course) {
         return res.status(404).json({ error: "Course not found" });
       }
+      
       res.status(200).json(course);
+    
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -83,6 +87,7 @@ const getCourse = async (req, res) => {
     }
   
     try {
+
       let cart = await Cart.findOne({ userId });
   
       if (!cart) {
@@ -152,7 +157,10 @@ const getCourse = async (req, res) => {
   
       if (itemType === "test") {
         cart.tests = cart.tests.filter(t => !t.testId.equals(itemId));
+      }else if (itemType === "course") {
+        cart.courses = cart.courses.filter(c => !c.courseId.equals(itemId));
       }
+  
   
       await cart.save();
       res.json({ success: true });
@@ -173,11 +181,23 @@ const getCourse = async (req, res) => {
       res.status(500).json({ message: "Error fetching cart tests." });
     }
   };
+
+  const getCartCourses = async (req, res) => {
+    const userId = req.user.id;
+    try {
+      const cart = await Cart.findOne({ userId }).populate("courses.courseId");
+      const courses = cart?.courses?.map(c => c.courseId) || [];
+      
+      res.json({ courses });
+    } catch (err) {
+      res.status(500).json({ message: "Error fetching cart courses." });
+    }
+  };
   
   // code to fetch all quizzes inside a tset for test player
 
   const getQuiz = async (req, res) => {
-    console.log("here");
+   
     
     try {
       const { ids } = req.body;
@@ -343,6 +363,37 @@ const getCourse = async (req, res) => {
   };
 
 
+  const getModulesDetails = async (req, res) => {
+
+try {
+  const { moduleIds } = req.body;
+
+
+  
+
+  // Validate input
+  if (!Array.isArray(moduleIds) || moduleIds.length === 0) {
+    return res.status(400).json({ message: 'moduleIds must be a non-empty array' });
+  }
+
+  // Convert string IDs to ObjectId if needed
+  const objectIds = moduleIds.map(id => new mongoose.Types.ObjectId(id));
+
+  // Find modules and populate lessons and quizzes inside lessons
+  const modules = await Module.find({ _id: { $in: objectIds } })
+   
+    
+
+
+  res.json({ modules });
+} catch (err) {
+  console.error('Error fetching module details:', err);
+  res.status(500).json({ message: 'Failed to fetch module details' });
+}
+}
+  
+
+
 
 
 
@@ -362,5 +413,7 @@ const getCourse = async (req, res) => {
     submitQuiz,
     createOrder,
     verifyPayment,
-    getCourse
+    getCourse,
+    getCartCourses,
+    getModulesDetails
   };

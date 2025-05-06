@@ -49,7 +49,7 @@ app.use(cors(corsOptions));
 // app.use(cors())
 
 // Apply security, compression, and logging middleware
-
+app.use(express.json());
 app.use(helmet());
 app.use(compression());
 app.use(bodyParser.json());

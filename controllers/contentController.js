@@ -4,76 +4,175 @@ const Quiz = require("../models/courseModel/quiz");
 const Module = require("../models/courseModel/module");
 const Test = require("../models/testModel/testModel");
 
+// const addCourse = async (req, res) => {
+//   try {
+//     const { title, description, price, category, instructor, imageUrl, level, modules } = req.body;
+
+//     let moduleIds = [];
+
+//     for (const module of modules) {
+//       let existingModule = await Module.findOne({ title: module.title });
+
+//       if (!existingModule) {
+//         let lessonIds = [];
+
+//         for (const lesson of module.lessons) {
+//           let quizIds = [];
+
+//           // ✅ Save multiple quizzes first
+//           if (lesson.quiz && Array.isArray(lesson.quiz)) {
+//             for (const quiz of lesson.quiz) {
+//               const newQuiz = new Quiz(quiz);
+//               await newQuiz.save();
+//               quizIds.push(newQuiz._id); // Store Quiz ObjectId
+//             }
+//           }
+
+//           console.log("Quiz IDs for lesson:", lesson.title, quizIds); // 🔍 Debugging
+
+//           // ✅ Save lesson with quiz references
+//           const newLesson = new Lesson({
+//             title: lesson.title,
+//             videoUrl: lesson.videoUrl,
+//             duration: lesson.duration,
+//             practiceQuestions: lesson.practiceQuestions,
+//             quiz: quizIds, // Store Quiz ObjectIds inside the lesson
+//           });
+
+//           await newLesson.save();
+//           lessonIds.push(newLesson._id); // Store Lesson ObjectId
+//         }
+
+//         // ✅ Save the module with Lesson ObjectIds
+//         const newModule = new Module({
+//           title: module.title,
+//           lessons: lessonIds, // Store Lesson ObjectIds
+//         });
+
+//         await newModule.save();
+//         moduleIds.push(newModule._id); // Store Module ObjectId
+//       } else {
+//         // ✅ Use existing module if found
+//         moduleIds.push(existingModule._id);
+//       }
+//     }
+
+//     // ✅ Save the course with Module ObjectIds
+//     const newCourse = new Course({
+//       title,
+//       description,
+//       price,
+//       category,
+//       instructor,
+//       imageUrl,
+//       level,
+//       modules: moduleIds, // Store Module ObjectIds
+//     });
+
+//     await newCourse.save();
+
+//     res.status(201).json({ message: "Course created successfully", course: newCourse });
+//   } catch (error) {
+//     console.error("Error adding course:", error.message); // 🔍 Debugging
+//     res.status(400).json({ error: error.message });
+//   }
+// };
+
 const addCourse = async (req, res) => {
   try {
-    const { title, description, price, category, instructor, imageUrl, level, modules } = req.body;
-
-    let moduleIds = [];
-
-    for (const module of modules) {
-      let existingModule = await Module.findOne({ title: module.title });
-
-      if (!existingModule) {
-        let lessonIds = [];
-
-        for (const lesson of module.lessons) {
-          let quizIds = [];
-
-          // ✅ Save multiple quizzes first
-          if (lesson.quiz && Array.isArray(lesson.quiz)) {
-            for (const quiz of lesson.quiz) {
-              const newQuiz = new Quiz(quiz);
-              await newQuiz.save();
-              quizIds.push(newQuiz._id); // Store Quiz ObjectId
-            }
-          }
-
-          console.log("Quiz IDs for lesson:", lesson.title, quizIds); // 🔍 Debugging
-
-          // ✅ Save lesson with quiz references
-          const newLesson = new Lesson({
-            title: lesson.title,
-            videoUrl: lesson.videoUrl,
-            duration: lesson.duration,
-            practiceQuestions: lesson.practiceQuestions,
-            quiz: quizIds, // Store Quiz ObjectIds inside the lesson
-          });
-
-          await newLesson.save();
-          lessonIds.push(newLesson._id); // Store Lesson ObjectId
-        }
-
-        // ✅ Save the module with Lesson ObjectIds
-        const newModule = new Module({
-          title: module.title,
-          lessons: lessonIds, // Store Lesson ObjectIds
-        });
-
-        await newModule.save();
-        moduleIds.push(newModule._id); // Store Module ObjectId
-      } else {
-        // ✅ Use existing module if found
-        moduleIds.push(existingModule._id);
-      }
-    }
-
-    // ✅ Save the course with Module ObjectIds
-    const newCourse = new Course({
+    const {
       title,
       description,
+      courseDescription,
       price,
       category,
       instructor,
       imageUrl,
       level,
-      modules: moduleIds, // Store Module ObjectIds
+      duration,
+      features,
+      learningOutcomes,
+      targetAudience,
+      requirements,
+      certificate,
+      modules,
+      ratings
+    } = req.body;
+
+    const moduleIds = [];
+
+    for (const module of modules) {
+      const lessonIds = [];
+
+      for (const lesson of module.lessons) {
+        const quizIds = [];
+
+        // Handle quizzes
+        if (lesson.quizzes && Array.isArray(lesson.quizzes)) {
+          for (const quiz of lesson.quizzes) {
+            const newQuiz = new Quiz({
+              title: quiz.title,
+              duration: quiz.duration,
+              questions: quiz.questions
+            });
+
+            await newQuiz.save();
+            quizIds.push(newQuiz._id);
+          }
+        }
+
+        // Create lesson
+        const newLesson = new Lesson({
+          title: lesson.title,
+          videoUrl: lesson.videoUrl,
+          duration: lesson.duration,
+          practiceQuestions: lesson.practiceQuestions,
+          quiz: quizIds
+        });
+
+        await newLesson.save();
+        lessonIds.push(newLesson._id);
+      }
+
+      // Create module
+      const newModule = new Module({
+        title: module.title,
+        lessons: lessonIds
+      });
+
+      await newModule.save();
+      moduleIds.push(newModule._id);
+    }
+
+    // Create course
+    const newCourse = new Course({
+      title,
+      description,
+      courseDescription,
+      price,
+      category,
+      instructor,
+      imageUrl,
+      level,
+      duration,
+      features,
+      learningOutcomes,
+      targetAudience,
+      requirements,
+      certificate,
+      modules: moduleIds,
+      ratings
     });
 
     await newCourse.save();
 
-    res.status(201).json({ message: "Course created successfully", course: newCourse });
+    res.status(201).json({
+      message: "Course created successfully",
+      course: newCourse
+    });
+
   } catch (error) {
-    console.error("Error adding course:", error.message); // 🔍 Debugging
+    console.error("Error adding course:", error.message);
     res.status(400).json({ error: error.message });
   }
 };

@@ -26,6 +26,21 @@ router.post("/verify-payment",authMiddleware,studentController.verifyPayment);
 //course/
 router.get("/getCourse",studentController.getCourse);
 router.get("/getCourseById/:id",studentController.getCourseById)
+router.get("/getCartCourses",authMiddleware,studentController.getCartCourses)
+router.post("/getModulesDetails",studentController.getModulesDetails) // Fetch modules by IDs
+
 // router.get("/getCourseCategories",studentController.getCourseCategories)
+
+
+//course -cart
+// router.post("/addCourseToCart",authMiddleware,studentController.addCourseToCart)
+// router.get("/checkCourse-itemCart",authMiddleware,studentController.checkCourseItemInCart)
+// router.get("/getCartCourse",authMiddleware,studentController.getCartCourse)
+// router.delete("/removeFromCart",authMiddleware,studentController.removeFromCart)
+
+
+//test payment
+// router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
+// router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);
 
 module.exports = router

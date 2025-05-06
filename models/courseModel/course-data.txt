@@ -1,12 +1,36 @@
 
-// to add a complete course  use this  method
-
-
-{
   "title": "MERN Stack Development",
   "description": "Full-stack development with MongoDB, Express, React, and Node.js.",
-  "price": 199,
+   "courseDescription": "This comprehensive CSS test is designed for absolute beginners as well as professionals looking to enhance their skills. By the end of this test, you will be able to analyze your CSS skills using industry-standard challenges. course",
+  "price": {
+    "actual": 950,
+    "discounted": 620
+  },
   "category": "Web Development",
+ "features": [
+    "Lifetime Access",
+    "Certificate of Completion",
+    "Hands-on Projects",
+    "AI-Powered Quizzes",
+    "Downloadable Resources"
+  ],
+  "learningOutcomes": [
+    "Master data wrangling, visualization, and storytelling",
+    "Work with real datasets to gain hands-on experience",
+    "Build a strong data portfolio for job applications"
+  ],
+  "targetAudience": [
+    "Anyone interested in data analysis & visualization",
+    "Students & professionals looking for career growth in analytics",
+    "Entrepreneurs & business owners wanting data-driven strategies"
+  ],
+  "requirements": [
+    "Basic computer literacy",
+    "No prior experience required",
+    "Willingness to learn and explore"
+  ],
+   "duration": 60,
+     "certificate": true,
   "instructor": "60d0fe4f5311236168a109ca",
   "imageUrl": "https://example.com/web-dev-course.jpg",
   "level": "Intermediate",
@@ -43,6 +67,8 @@
           "quizzes": [
             {
               "title": "Quiz 2: HTML & CSS Basics",
+              "description":"de"
+               "duration": 20,
               "questions": [
                 { "questionText": "What does CSS stand for?", "options": ["Cascading Style Sheets", "Computer Style System"], "answer": "Cascading Style Sheets" }
               ]
@@ -64,6 +90,8 @@
           "quizzes": [
             {
               "title": "Quiz 1: JavaScript Basics",
+              "description":"de"
+               "duration": 20,
               "questions": [
                 { "questionText": "What is a variable in JavaScript?", "options": ["A storage unit", "A function"], "answer": "A storage unit" }
               ]
@@ -71,6 +99,14 @@
           ]
         }
       ]
+    }
+  ],
+   "ratings": [
+    {
+      "studentId": "67e001295bb8ea254983f40c",
+      "rating": 5,
+      "review": "Excellent test with practical challenges",
+      "createdAt": "2024-03-20T10:00:00.000Z"
     }
   ]
 }
