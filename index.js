@@ -38,15 +38,15 @@ app.use(
   })
 );
 
-const corsOptions = {
-  origin: "https://www.genailearning.in", // Allow only this origin
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true,
-};
+// const corsOptions = {
+//   origin: "https://www.genailearning.in", // Allow only this origin
+//   methods: ["GET", "POST", "PUT", "DELETE"],
+//   credentials: true,
+// };
 
-app.use(cors(corsOptions));
+// app.use(cors(corsOptions));
 
-// app.use(cors())
+app.use(cors())
 
 // Apply security, compression, and logging middleware
 app.use(express.json());

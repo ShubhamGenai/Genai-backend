@@ -29,6 +29,10 @@ router.get("/getCourseById/:id",studentController.getCourseById)
 router.get("/getCartCourses",authMiddleware,studentController.getCartCourses)
 router.post("/getModulesDetails",studentController.getModulesDetails) // Fetch modules by IDs
 
+//couse payment
+
+router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
+router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);
 // router.get("/getCourseCategories",studentController.getCourseCategories)
 
 

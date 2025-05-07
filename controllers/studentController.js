@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const EnrolledTest = require("../models/testModel/enrolledTest");
 const Module = require("../models/courseModel/module");
 const { default:mongoose } = require("mongoose");
+const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
 dotenv.config();
 
 
@@ -303,7 +304,7 @@ const getCourse = async (req, res) => {
   
   // 2️⃣ Verify payment
   const verifyPayment = async (req, res) => {
-    console.log(req.body);
+   
   
     const {
       razorpay_order_id,
@@ -363,14 +364,10 @@ const getCourse = async (req, res) => {
   };
 
 
-  const getModulesDetails = async (req, res) => {
+const getModulesDetails = async (req, res) => {
 
 try {
   const { moduleIds } = req.body;
-
-
-  
-
   // Validate input
   if (!Array.isArray(moduleIds) || moduleIds.length === 0) {
     return res.status(400).json({ message: 'moduleIds must be a non-empty array' });
@@ -394,6 +391,106 @@ try {
   
 
 
+const createCourseOrder = async (req, res) => {
+  console.log(req.body);
+  
+  const { courseId } = req.body;
+  const userId = req.user?.id || req.user?._id;
+
+  try {
+    const course = await Course.findById(courseId);
+    if (!course) return res.status(404).json({ message: "course not found" });
+
+    // 🛠️ Properly fetch the Student using the userId
+    const student = await Student.findOne({ userId });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const amount = course.price.discounted;
+
+    const order = await razorpay.orders.create({
+      amount: amount * 100,
+      currency: "INR",
+      receipt: `receipt_${Date.now()}`
+    });
+
+    // 💾 Create payment record
+    const payment = await paymentSchema.create({
+      userId: userId,
+      student: student._id,
+      course: courseId,
+      razorpayOrderId: order.id,
+      amount,
+    });
+
+    res.status(201).json({ order, paymentId: payment._id });
+  } catch (err) {
+    res.status(500).json({ message: "Error creating order", error: err.message });
+  }
+};
+
+
+// 2️⃣ Verify payment
+const verifyCoursePayment = async (req, res) => {
+ 
+
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    paymentId
+  } = req.body;
+
+  const generated_signature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(razorpay_order_id + "|" + razorpay_payment_id)
+    .digest("hex");
+
+  const isAuthentic = generated_signature === razorpay_signature;
+
+  if (!isAuthentic) {
+    return res.status(400).json({ success: false, message: "Payment verification failed" });
+  }
+
+  try {
+    // 1. Update payment status
+    const payment = await paymentSchema.findByIdAndUpdate(paymentId, {
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature,
+      status: "paid",
+    }, { new: true });
+
+    const studentId = payment.student;
+    const courseId = payment.course;
+
+    // 2. Enroll student to test
+    const student = await Student.findById(studentId);
+    if (!student.enrolledCourses.includes(courseId)) {
+      student.enrolledCourses.push(courseId);
+      await student.save();
+    }
+
+    // ✅ 3. Update the Test model to store student ID
+    const course = await Course.findById(courseId);
+    if (!course.enrolledStudents.includes(req.user.id)) {
+      course.enrolledStudents.push(req.user.id);
+      await course.save();
+    }
+
+    // 4. Optionally create EnrolledTest record if you're tracking more data
+    await EnrolledCourse.create({
+      studentId,
+      courseId,
+      paymentStatus: "completed",
+    });
+
+    res.json({ success: true, message: "Payment verified and student enrolled", payment });
+
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Error verifying payment", error: err.message });
+  }
+};
+
+
 
 
 
@@ -415,5 +512,7 @@ try {
     verifyPayment,
     getCourse,
     getCartCourses,
-    getModulesDetails
+    getModulesDetails,
+    createCourseOrder,
+    verifyCoursePayment
   };
