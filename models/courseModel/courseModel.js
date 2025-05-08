@@ -1,5 +1,16 @@
 const mongoose = require("mongoose");
 
+
+const courseImages = [
+  "https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691773/designwithai_gobbbw.jpg",
+  "https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691773/promptengineering_r2kosa.jpg",
+  "https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691768/dataanalytics_xmodtp.jpg",
+];
+
+const getRandomImageUrl = () => {
+  return courseImages[Math.floor(Math.random() * courseImages.length)];
+};
+
 const CourseSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
@@ -12,7 +23,7 @@ const CourseSchema = new mongoose.Schema(
     },
     category: { type: String, trim: true },
     instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    imageUrl: { type: String, required: true },
+    imageUrl: { type: String ,default: getRandomImageUrl},
     level: { type: String, enum: ["Beginner", "Intermediate", "Advanced"], default: "Beginner" },
     startDate: { type: Date, default: Date.now },
     modules: [{ type: mongoose.Schema.Types.ObjectId, ref: "Module" }], // References Module Model
@@ -20,14 +31,7 @@ const CourseSchema = new mongoose.Schema(
     isBestSeller: { type: Boolean, default: false },
     features: [{
       type: String,
-      enum: [
-        "Lifetime Access",
-        "Certificate of Completion",
-        "Hands-on Projects",
-        "AI-Powered Quizzes",
-        "Downloadable Resources"
-
-      ]
+     
     }],
     learningOutcomes: [String], // ✅ NEW: "What you'll learn"
     targetAudience: [String],   // ✅ NEW: "Who should take this course"

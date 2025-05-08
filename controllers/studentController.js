@@ -493,6 +493,156 @@ const verifyCoursePayment = async (req, res) => {
 
 
 
+//cart -payment
+
+const createCartOrder = async (req, res) => {
+  const userId = req.user?.id || req.user?._id;
+
+  try {
+    const student = await Student.findOne({ userId });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const cart = await Cart.findOne({ userId })
+      .populate("courses.courseId")
+      .populate("tests.testId");
+
+    if (!cart) return res.status(404).json({ message: "Cart is empty" });
+
+    const totalAmount = [
+      ...cart.courses.map(item => item.courseId?.price?.discounted || 0),
+      ...cart.tests.map(item => item.testId?.price?.discounted || 0),
+    ].reduce((sum, price) => sum + price, 0);
+
+    const order = await razorpay.orders.create({
+      amount: totalAmount * 100,
+      currency: "INR",
+      receipt: `cart_${Date.now()}`
+    });
+
+    const payment = await Payment.create({
+      userId,
+      student: student._id,
+      amount: totalAmount,
+      razorpayOrderId: order.id,
+      status: "created"
+    });
+
+    res.status(201).json({
+      order,
+      paymentId: payment._id,
+      message: "Order created successfully"
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Order creation failed", error: error.message });
+  }
+};
+
+
+const verifyCartPayment = async (req, res) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    paymentId
+  } = req.body;
+
+  const generated_signature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(razorpay_order_id + "|" + razorpay_payment_id)
+    .digest("hex");
+
+  const isAuthentic = generated_signature === razorpay_signature;
+  if (!isAuthentic) {
+    return res.status(400).json({ success: false, message: "Invalid signature" });
+  }
+
+  try {
+    const payment = await paymentSchema.findByIdAndUpdate(paymentId, {
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature,
+      status: "paid"
+    }, { new: true });
+
+    const student = await Student.findById(payment.student);
+    const userId = payment.userId;
+
+    const cart = await Cart.findOne({ userId })
+      .populate("courses.courseId")
+      .populate("tests.testId");
+
+    const enrolledCourseIds = [];
+    const enrolledTestIds = [];
+
+    for (const { courseId } of cart.courses) {
+      if (courseId && !student.enrolledCourses.includes(courseId._id)) {
+        student.enrolledCourses.push(courseId._id);
+        enrolledCourseIds.push(courseId._id);
+        await EnrolledCourse.create({
+          studentId: student._id,
+          courseId: courseId._id,
+          paymentStatus: "completed"
+        });
+        courseId.enrolledStudents.push(userId);
+        await courseId.save();
+      }
+    }
+
+    for (const { testId } of cart.tests) {
+      if (testId && !student.enrolledTests.includes(testId._id)) {
+        student.enrolledTests.push(testId._id);
+        enrolledTestIds.push(testId._id);
+        await EnrolledTest.create({
+          studentId: student._id,
+          testId: testId._id,
+          paymentStatus: "completed"
+        });
+        testId.enrolledStudents.push(userId);
+        await testId.save();
+      }
+    }
+
+    await student.save();
+
+    // Clear the cart
+    await Cart.findOneAndUpdate({ userId }, { courses: [], tests: [] });
+
+    res.json({ success: true, message: "Payment verified and enrolled successfully", enrolledCourseIds, enrolledTestIds });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Verification failed", error: error.message });
+  }
+};
+
+
+
+const getLatestCoursesAndTests = async (req, res) => {
+  try {
+    const latestCourses = await Course.find()
+      .sort({ createdAt: -1 })
+      .limit(3);
+
+    const latestTests = await Test.find()
+      .sort({ createdAt: -1 })
+      .limit(3);
+
+    res.status(200).json({
+      success: true,
+      courses: latestCourses,
+      tests: latestTests,
+    });
+  } catch (error) {
+    console.error('Error fetching latest courses and tests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error. Could not fetch data.',
+    });
+  }
+};
+
+
+
+
+
+
 
 
   
@@ -514,5 +664,10 @@ const verifyCoursePayment = async (req, res) => {
     getCartCourses,
     getModulesDetails,
     createCourseOrder,
-    verifyCoursePayment
+    verifyCoursePayment,
+
+    createCartOrder,
+    verifyCartPayment,
+
+    getLatestCoursesAndTests
   };

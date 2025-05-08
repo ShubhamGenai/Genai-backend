@@ -36,11 +36,12 @@ router.post("/verify-course-payment",authMiddleware,studentController.verifyCour
 // router.get("/getCourseCategories",studentController.getCourseCategories)
 
 
-//course -cart
-// router.post("/addCourseToCart",authMiddleware,studentController.addCourseToCart)
-// router.get("/checkCourse-itemCart",authMiddleware,studentController.checkCourseItemInCart)
-// router.get("/getCartCourse",authMiddleware,studentController.getCartCourse)
-// router.delete("/removeFromCart",authMiddleware,studentController.removeFromCart)
+//cart-payment
+router.post("/create-cart-payment",authMiddleware,studentController.createCartOrder);
+router.post("/verify-cart-payment",authMiddleware,studentController.verifyCartPayment);
+
+router.get("/get-latest-Course-test",studentController.getLatestCoursesAndTests)    
+
 
 
 //test payment

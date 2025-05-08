@@ -385,6 +385,8 @@ const addQuiz = async (req, res) => {
   }
 };
 
+
+
   
 
 
@@ -393,4 +395,5 @@ const addQuiz = async (req, res) => {
     addModule,
     addTest,
     addQuiz,
+    
   }

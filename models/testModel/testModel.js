@@ -11,6 +11,10 @@ const TestSchema = new mongoose.Schema(
       actual: { type: Number, required: true },
       discounted: { type: Number, required: true }
     },
+    image: {
+      type: String,
+      default: 'https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691763/jee_kai0bt.png' // Replace with your default image URL
+    },
     level: { 
       type: String, 
       enum: ["Beginner", "Intermediate", "Advanced", "Intermediate to Advanced"],
@@ -18,17 +22,7 @@ const TestSchema = new mongoose.Schema(
     },
     features: [{
       type: String,
-      enum: [
-        "Real-world CSS challenges",
-        "Instant results & score breakdown",
-        "Certificate upon passing",
-        "One free retake if failed",
-        "Practical CSS Scenarios",
-        "Instant result & analytics",
-        "Certificate on passing",
-        "Try again for free if you fail"
-
-      ]
+      
     }],
     skills: [{
       type: String,
