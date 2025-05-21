@@ -11,6 +11,7 @@ const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
 const Employer = require("../models/EmployerModel");
 const Admin = require("../models/adminModel");
+const ContentManager = require("../models/ContentManagerModel");
 const client = new OAuth2Client(process.env.CLIENTID);
 
 
@@ -377,7 +378,10 @@ const getUserDetails = async (req, res) => {
     }
     else if (baseUser.role === "admin") {
       additionalDetails = await Admin.findOne({ userId: req.user.id }).lean();
+    } else if (baseUser.role === "content") {
+      additionalDetails = await ContentManager.findOne({ userId: req.user.id }).lean();
     }
+
 
     res.status(200).json({
       user: {
@@ -395,7 +399,7 @@ const getUserDetails = async (req, res) => {
 
 
 const registerAdmin = async (req, res) => {
-  console.log(req.body);
+ 
   
   try {
     const {  email, password } = req.body;
@@ -524,6 +528,136 @@ const adminSignIn = async (req, res) => {
 };
 
 
+
+const registerContent = async (req, res) => {
+ 
+  
+  try {
+    const {  email, password } = req.body;
+
+    // ✅ Validate input
+    if (  !email || !password) {
+      return res.status(400).json({ success: false, message: " Email, and Password are required." });
+    }
+
+    // ✅ Check if the admin (user) already exists
+    let existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Content manager with this email already exists." });
+    }
+
+    // ✅ Hash password securely
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // ✅ Create User entry (linked to Admin)
+    const newUser = new User({
+      name: "Content-Manager",
+      email,
+      password: hashedPassword,
+      role: "content",
+      isEmailVerified: true,
+      isVerified: true, // Directly setting email as verified since no OTP is used
+    });
+
+    await newUser.save();
+
+    // ✅ Create Admin entry
+    const newContentManager = new ContentManager({
+      userId: newUser._id,
+      fullName:"Content-Manager",
+     
+    });
+
+    await newContentManager.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "ContentManager registered successfully.",
+    });
+
+  } catch (error) {
+    console.error("Error in register:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+
+const contentManagerSignIn = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // ✅ Validate Input
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "Email and Password are required." });
+    }
+
+    // ✅ Ensure valid email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: "Invalid email format." });
+    }
+
+    // ✅ Check if Admin Exists
+    const adminUser = await User.findOne({ email, role: "content" });
+    if (!adminUser) {
+      return res.status(404).json({ success: false, message: "ContentManager not found." });
+    }
+
+    // ✅ Ensure Email is Verified
+    if (!adminUser.isEmailVerified) {
+      return res.status(403).json({ success: false, message: "Email is not verified. Please verify your email before signing in." });
+    }
+
+    // ✅ Ensure Profile is Verified
+    if (!adminUser.isVerified) {
+      return res.status(403).json({ success: false, message: "Not verified. Please contact support." });
+    }
+
+    // ✅ Compare Password
+    const isMatch = await bcrypt.compare(password, adminUser.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: "Invalid credentials." });
+    }
+
+    // ✅ Fetch Admin Details
+    const adminDetails = await ContentManager.findOne({ userId: adminUser._id });
+    if (!adminDetails) {
+      return res.status(404).json({ success: false, message: "ContentManager profile not found." });
+    }
+
+    // ✅ Check if Admin is Active
+    if (!adminDetails.isActive) {
+      return res.status(403).json({ success: false, message: "Admin account is deactivated. Please contact support." });
+    }
+
+    // ✅ Generate JWT Token
+    const token = jwt.sign(
+      { id: adminUser._id, role: adminUser.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+   
+
+    return res.status(200).json({
+      success: true,
+      message: "ContentManager signed in successfully.",
+      token,
+      user: {
+        id: adminUser._id,
+        name: adminDetails?.fullName||{},
+        email: adminUser.email,
+        role: adminUser.role,
+     
+      },
+    });
+
+  } catch (error) {
+    console.error("Error in adminSignIn:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
   registerUser,
   verifyOtp,
@@ -539,6 +673,10 @@ module.exports = {
 
   registerAdmin,
   adminSignIn,
+
+  registerContent,
+  contentManagerSignIn
+
 
 
 
