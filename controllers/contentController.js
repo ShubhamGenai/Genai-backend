@@ -181,30 +181,84 @@ const addCourse = async (req, res) => {
 
 const addLesson = async (req, res) => {
   try {
-    const { title, videoUrl, duration, practiceQuestions, quizzes } = req.body;
+    const { title, content, duration, practiceQuestions, quiz } = req.body;
 
-    // 1️⃣ First, save multiple quizzes
-    const quizIds = [];
-    for (const quiz of quizzes) {
-      const newQuiz = new Quiz(quiz);
-      await newQuiz.save();
-      quizIds.push(newQuiz._id); // Store each saved quiz's ID
+    // Validate required fields
+    if (!title || !content) {
+      return res.status(400).json({ 
+        error: "Title and content are required fields" 
+      });
     }
 
-    // 2️⃣ Now, save the lesson with the array of quiz ObjectIds
+    // Validate practice questions structure if provided
+    if (practiceQuestions && practiceQuestions.length > 0) {
+      for (let i = 0; i < practiceQuestions.length; i++) {
+        const question = practiceQuestions[i];
+        if (!question.question || question.question.trim() === '') {
+          return res.status(400).json({ 
+            error: `Practice question ${i + 1} is missing the required 'question' field` 
+          });
+        }
+      }
+    }
+
+    // Option 1: If you want to create new quizzes and reference them
+    const quizIds = [];
+    if (quiz && quiz.length > 0) {
+      for (const quizData of quiz) {
+        // Only create new quizzes if quizData is an object (not just an ObjectId string)
+        if (typeof quizData === 'object' && !quizData._id) {
+          const newQuiz = new Quiz(quizData);
+          await newQuiz.save();
+          quizIds.push(newQuiz._id);
+        } else {
+          // If it's already an ObjectId or string, just add it
+          quizIds.push(quizData);
+        }
+      }
+    }
+
+    // Create the lesson
     const newLesson = new Lesson({
-      title,
-      videoUrl,
-      duration,
-      practiceQuestions,
-      quizzes: quizIds // Store multiple quiz references
+      title: title.trim(),
+      content: content.trim(),
+      duration: duration ? parseInt(duration) : undefined,
+      practiceQuestions: practiceQuestions || [],
+      quiz: quizIds // This matches your schema field name 'quiz'
     });
 
     await newLesson.save();
 
-    res.status(201).json({ message: "Lesson created successfully", lesson: newLesson });
+    // Populate quiz references for the response
+    await newLesson.populate('quiz');
+
+    res.status(201).json({ 
+      message: "Lesson created successfully", 
+      lesson: newLesson 
+    });
+
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Error creating lesson:', error);
+    
+    // Handle mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: validationErrors 
+      });
+    }
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        error: "A lesson with this title already exists" 
+      });
+    }
+
+    res.status(500).json({ 
+      error: "Internal server error while creating lesson" 
+    });
   }
 };
 
@@ -368,7 +422,7 @@ const addTest = async (req, res) => {
 
 const addQuiz = async (req, res) => {
   try {
-    const { title, questions } = req.body;
+    const { title,duration, questions } = req.body;
 
     // ✅ Validate data
     if (!title || !questions || questions.length === 0) {
@@ -376,7 +430,7 @@ const addQuiz = async (req, res) => {
     }
 
     // ✅ Save the quiz
-    const newQuiz = new Quiz({ title, questions });
+    const newQuiz = new Quiz({ title,duration, questions });
     await newQuiz.save();
 
     res.status(201).json({ message: "Quiz added successfully", quiz: newQuiz });
@@ -386,7 +440,41 @@ const addQuiz = async (req, res) => {
 };
 
 
+const getQuiz = async (req, res) => {
+  try {
+    const quizzes = await Quiz.find() // await is needed here
+    res.status(200).json(quizzes); // no need to wrap in { quizzes } unless you want it nested
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
 
+
+    const getLesson = async (req, res) => {
+      try {
+        const lessons = await Lesson.find()
+        res.status(200).json(lessons);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    }
+
+
+    const getLessonById = async (req, res) => {
+     try {
+    const { lessonId } = req.params;
+    const lesson = await Lesson.findById(lessonId);
+
+    if (!lesson) {
+      return res.status(404).json({ message: 'Lesson not found' });
+    }
+
+    res.status(200).json(lesson);
+  } catch (error) {
+    console.error('Error fetching lesson:', error);
+    res.status(500).json({ message: 'Server error while fetching lesson' });
+  }
+}
   
 
 
@@ -395,5 +483,8 @@ const addQuiz = async (req, res) => {
     addModule,
     addTest,
     addQuiz,
+    getQuiz,
+    getLesson,
+    getLessonById
     
   }
