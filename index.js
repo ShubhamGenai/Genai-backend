@@ -4,18 +4,16 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
-const passport = require('passport');
+const passport = require("passport");
 const compression = require("compression");
 const morgan = require("morgan");
-const redis = require("redis");
-const path = require('path');
+const path = require("path");
 const jwt = require("jsonwebtoken");
-const cluster = require("cluster");
-const os = require("os");
 const errorHandler = require("./middlewares/errorHandlers");
 const MongoDB = require("./config/db");
 const axios = require("axios");
-const session = require('express-session');
+const session = require("express-session");
+const MongoStore = require("connect-mongo");
 
 // Import routes
 const authRoute = require("./routes/authRoute");
@@ -27,94 +25,85 @@ const studentRoute = require("./routes/studentRoute");
 // Initialize environment variables
 dotenv.config();
 
+// Initialize Express app
 const app = express();
 
-// Enable CORS (uncomment and modify if needed)
-// app.use(
-//   session({
-//     secret: "process.env.SESSION_SECRET",
-//     resave: false,
-//     saveUninitialized: false,
-//   })
-// );
+// ✅ CORS Configuration
+const allowedOrigins = [
+  "https://www.genailearning.in", // production frontend
+  "http://localhost:3000",        // local dev
+];
 
 const corsOptions = {
-  origin: "https://www.genailearning.in", // Allow only this origin
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 };
 
+// Apply CORS first
 app.use(cors(corsOptions));
 
-// app.use(cors())
-
-// Apply security, compression, and logging middleware
-app.use(express.json());
+// ✅ Apply security, compression, and logging middleware
 app.use(helmet());
 app.use(compression());
 app.use(bodyParser.json());
-app.use(morgan("dev"));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(passport.initialize())
-app.use(passport.session())
+app.use(morgan("dev"));
 
-// Static file hosting
+// ✅ Connect to MongoDB
+MongoDB();
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// ✅ Setup session store using MongoDB
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "supersecretkey",
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: "sessions",
+      ttl: 14 * 24 * 60 * 60, // 14 days
+    }),
+    cookie: {
+      secure: process.env.NODE_ENV === "production", // only true over HTTPS
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+    },
+  })
+);
 
-// Basic route to verify server is working
+// ✅ Passport initialization
+app.use(passport.initialize());
+app.use(passport.session());
 
+// ✅ Static file hosting
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// ✅ Test route
 app.get("/", (req, res) => {
   res.json("Hello from the API!");
 });
 
-
-// Error handling middleware
-
-app.use(errorHandler);
-
-// Redis client for caching and session management
-const redisClient = redis.createClient();
-redisClient.on("error", (err) => {
-  console.log("Redis Client Error", err);
-});
-
-// MongoDB connection
-
-MongoDB();
-
-// Define routes
+// ✅ API routes
 app.use("/api/auth", authRoute);
 app.use("/api/content", contentRoute);
 app.use("/api/admin", adminRoute);
 app.use("/api/employer", employerRoute);
 app.use("/api/student", studentRoute);
 
+// ✅ Global error handler
+app.use(errorHandler);
 
-
-// Cluster mode to utilize all CPU cores (for scalability)
-// if (cluster.isMaster) {
-//   const numCPUs = os.cpus().length;
-//   console.log(`Master server is running. Forking ${numCPUs} workers...`);
-
-//   // Fork workers
-//   for (let i = 0; i < numCPUs; i++) {
-//     cluster.fork();
-//   }
-
-//   cluster.on('exit', (worker, code, signal) => {
-//     console.log(`Worker ${worker.process.pid} died`);
-//   });
-
-// } else {
-
-  // App listening on specified port
-
-  const PORT = process.env.PORT || 8080;
-  app.listen(PORT, () => {
-    console.log(` listening on port ${PORT}`);
-
-  });
-
-// }
-
+// ✅ Start server
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
