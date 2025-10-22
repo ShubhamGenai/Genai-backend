@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require("jsonwebtoken")
 const dotenv = require("dotenv")
 dotenv.config();
-
+const admin = require("firebase-admin");
 require('../config/passport');
 const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
@@ -325,8 +325,94 @@ const setPassword = async (req, res) => {
 
 
 // Google Login
-const googlelogin = (req, res, next) => {
-  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+// const googlelogin = (req, res, next) => {
+//   passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+// };
+
+
+const googlelogin = async (req, res) => {
+  try {
+    const { name, email, firebaseUid } = req.body;
+
+    // ✅ Validate input
+    if (!name || !email || !firebaseUid) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Name, email, and Firebase UID are required." 
+      });
+    }
+
+    // ✅ Verify Firebase UID (uncomment when Firebase is properly configured)
+    // const userRecord = await admin.auth().getUser(firebaseUid).catch(() => null);
+    // if (!userRecord) {
+    //   return res.status(401).json({ 
+    //     success: false, 
+    //     message: "Invalid Firebase UID" 
+    //   });
+    // }
+
+    // ✅ Find or create user
+    let user = await User.findOne({ email });
+    
+    if (!user) {
+      // Create new user
+      user = new User({
+        name: name,
+        email,
+        googleId: firebaseUid,
+        password: null, // No password needed for Google auth
+        isEmailVerified: true,
+        isVerified: true,
+        role:"student",
+      });
+      await user.save();
+
+      // ✅ Create student profile for new users
+      const newStudent = new Student({ userId: user._id });
+      await newStudent.save();
+    } else {
+      // Update existing user with Google ID if not set
+      if (!user.googleId) {
+        user.googleId = firebaseUid;
+        user.isEmailVerified = true;
+        user.isVerified = true;
+        await user.save();
+      }
+    }
+
+    // ✅ Generate JWT token (consistent with other auth functions)
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        role: user.role, 
+        name: user.name, 
+        isProfileVerified: user.isProfileVerified 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    // ✅ Return consistent response format
+    return res.status(200).json({
+      success: true,
+      message: "Google login successful.",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isProfileVerified: user.isProfileVerified
+      }
+    });
+
+  } catch (error) {
+    console.error("Google login error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Server error. Please try again later." 
+    });
+  }
 };
 
 const googleCallback = (req, res) => {

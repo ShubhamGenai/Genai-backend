@@ -31,7 +31,7 @@ const app = express();
 // ✅ CORS Configuration
 const allowedOrigins = [
   "https://www.genailearning.in", // production frontend
-  "http://localhost:3000",        // local dev
+  "http://localhost:5173",        // local dev
 ];
 
 const corsOptions = {
