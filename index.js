@@ -30,7 +30,7 @@ const app = express();
 
 // ✅ CORS Configuration
 const allowedOrigins = [
-  "https://genai-frontend-xi.vercel.app/",
+  "https://genai-frontend-xi.vercel.app",
   "https://www.genailearning.in", // production frontend
   "http://localhost:5173",        // local dev
 ];
