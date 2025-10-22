@@ -147,6 +147,7 @@ const getCourse = async (req, res) => {
       res.status(500).json({ message: "Internal server error" });
     }
   };
+  
 
   const removeFromCart = async (req, res) => {
     const { itemId, itemType } = req.body;

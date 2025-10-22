@@ -36,6 +36,7 @@ router.post("/verify-course-payment",authMiddleware,studentController.verifyCour
 // router.get("/getCourseCategories",studentController.getCourseCategories)
 
 
+
 //cart-payment
 router.post("/create-cart-payment",authMiddleware,studentController.createCartOrder);
 router.post("/verify-cart-payment",authMiddleware,studentController.verifyCartPayment);
