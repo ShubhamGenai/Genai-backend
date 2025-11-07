@@ -142,7 +142,32 @@ const verifyOtp = async (req, res) => {
   }
 };
 
+const resendOtp = async (req, res) => {
+try {
+  const { email } = req.body;
 
+  if (!email) {
+    return res.status(400).json({ success: false, message: "Email is required." });
+  }
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(404).json({ success: false, message: "User not found." });
+  }
+
+  // Generate a new OTP
+  user.otp = Math.floor(100000 + Math.random() * 900000).toString();
+  user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // OTP valid for 10 minutes
+
+  await Promise.all([user.save(), sendOtpEmail(email, user.otp)]);
+
+  return res.status(200).json({ success: true, message: "New OTP sent successfully!" });
+} catch (error) {
+  console.error("Error in resendOtp:", error);
+  return res.status(500).json({ success: false, message: "Server error", error: error.message });
+}
+};
 
 const completeProfile = async (req, res) => {
   const { email, name, contact, qualification, interest } = req.body;
@@ -761,7 +786,8 @@ module.exports = {
   adminSignIn,
 
   registerContent,
-  contentManagerSignIn
+  contentManagerSignIn,
+  resendOtp
 
 
 
