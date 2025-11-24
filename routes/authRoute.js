@@ -30,6 +30,11 @@ router.post("/content-manager-signin",authController.contentManagerSignIn)
 router.get("/userDetails",authMiddleware,authController.getUserDetails)
 
 
+// Mobile Authentication Routes
+router.post('/login/send-otp', authController.sendLoginOtp);
+router.post('/login/verify-otp', authController.verifyLoginOtp);
+router.post('/signup/send-otp', authController.sendSignupOtp);
+router.post('/signup/verify-otp', authController.verifySignupOtp);
 
 
 module.exports=router

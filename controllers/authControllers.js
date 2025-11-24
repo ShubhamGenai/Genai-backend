@@ -1,6 +1,7 @@
 const User = require("../models/UserModel");
 const Student = require("../models/studentSchema")
 const { sendOtpEmail } = require('../utils/emailOTP');
+const { sendOtpSms } = require('../utils/smsOTP');
 const bcrypt = require('bcryptjs');
 const jwt = require("jsonwebtoken")
 const dotenv = require("dotenv")
@@ -769,6 +770,317 @@ const contentManagerSignIn = async (req, res) => {
   }
 };
 
+
+// ==================== MOBILE AUTHENTICATION ====================
+
+// 📱 LOGIN: Send OTP to mobile (Login - Mobile only)
+const sendLoginOtp = async (req, res) => {
+  try {
+    const { mobile } = req.body;
+
+    // ✅ Validate input
+    if (!mobile) {
+      return res.status(400).json({ success: false, message: "Mobile number is required." });
+    }
+
+    // ✅ Validate mobile number format (10 digits)
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ success: false, message: "Please enter a valid 10-digit mobile number." });
+    }
+
+    // ✅ Check if user exists with this mobile number
+    let user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "No account found with this mobile number. Please sign up first." 
+      });
+    }
+
+    // ✅ Check if user is verified
+    if (!user.isVerified) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Account not verified. Please complete signup process." 
+      });
+    }
+
+    // ✅ Generate new OTP
+    user.otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await user.save();
+
+    // ✅ Send OTP via SMS
+    try {
+      await sendOtpSms(mobile, user.otp);
+    } catch (smsError) {
+      console.error("SMS sending failed:", smsError);
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to send OTP. Please try again later." 
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully to your mobile number.",
+    });
+
+  } catch (error) {
+    console.error("Error in sendLoginOtp:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// 📱 LOGIN: Verify OTP and login
+const verifyLoginOtp = async (req, res) => {
+  try {
+    const { mobile, otp } = req.body;
+
+    // ✅ Validate input
+    if (!mobile || !otp) {
+      return res.status(400).json({ success: false, message: "Mobile number and OTP are required." });
+    }
+
+    // ✅ Find user by mobile
+    const user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    // ✅ Check OTP expiration
+    if (!user.otp || user.otpExpires < Date.now()) {
+      return res.status(400).json({ success: false, message: "OTP has expired. Please request a new one." });
+    }
+
+    // ✅ Verify OTP
+    if (user.otp !== otp) {
+      return res.status(400).json({ success: false, message: "Invalid OTP. Please try again." });
+    }
+
+    // ✅ Clear OTP
+    user.otp = null;
+    user.otpExpires = null;
+    user.isMobileVerified = true;
+
+    await user.save();
+
+    // ✅ Generate JWT token
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        role: user.role, 
+        name: user.name, 
+        isProfileVerified: user.isProfileVerified 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful.",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role,
+        isProfileVerified: user.isProfileVerified
+      }
+    });
+
+  } catch (error) {
+    console.error("Error in verifyLoginOtp:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// 📱 SIGNUP: Send OTP to mobile (Signup - Name, Email, Mobile)
+const sendSignupOtp = async (req, res) => {
+  try {
+    const { name, email, mobile, role } = req.body;
+
+    // ✅ Validate input
+    if (!name || !email || !mobile) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Name, email, and mobile number are required." 
+      });
+    }
+
+    // ✅ Validate mobile number format (10 digits)
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please enter a valid 10-digit mobile number." 
+      });
+    }
+
+    // ✅ Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please enter a valid email address." 
+      });
+    }
+
+    // ✅ Check if user already exists with email
+    let existingEmailUser = await User.findOne({ email });
+    if (existingEmailUser && existingEmailUser.isVerified) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "An account with this email already exists." 
+      });
+    }
+
+    // ✅ Check if user already exists with mobile
+    let existingMobileUser = await User.findOne({ mobile });
+    if (existingMobileUser && existingMobileUser.isVerified) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "An account with this mobile number already exists." 
+      });
+    }
+
+    let user;
+
+    if (existingEmailUser || existingMobileUser) {
+      // ✅ Update existing unverified user
+      user = existingEmailUser || existingMobileUser;
+      user.name = name;
+      user.email = email;
+      user.mobile = mobile;
+      user.role = role || "student";
+    } else {
+      // ✅ Create new user
+      user = new User({
+        name,
+        email,
+        mobile,
+        role: role || "student",
+        password: null, // No password for mobile signup
+      });
+    }
+
+    // ✅ Generate OTP
+    user.otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await user.save();
+
+    // ✅ Send OTP via SMS
+    try {
+      await sendOtpSms(mobile, user.otp);
+    } catch (smsError) {
+      console.error("SMS sending failed:", smsError);
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to send OTP. Please try again later." 
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully to your mobile number.",
+    });
+
+  } catch (error) {
+    console.error("Error in sendSignupOtp:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// 📱 SIGNUP: Verify OTP and create account
+const verifySignupOtp = async (req, res) => {
+  try {
+    const { mobile, otp } = req.body;
+
+    // ✅ Validate input
+    if (!mobile || !otp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Mobile number and OTP are required." 
+      });
+    }
+
+    // ✅ Find user by mobile
+    const user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    // ✅ Check OTP expiration
+    if (!user.otp || user.otpExpires < Date.now()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "OTP has expired. Please request a new one." 
+      });
+    }
+
+    // ✅ Verify OTP
+    if (user.otp !== otp) {
+      return res.status(400).json({ success: false, message: "Invalid OTP. Please try again." });
+    }
+
+    // ✅ Mark user as verified
+    user.isEmailVerified = true;
+    user.isVerified = true;
+    user.isMobileVerified = true;
+    user.otp = null;
+    user.otpExpires = null;
+
+    await user.save();
+
+    // ✅ If role is "student", create a student profile if not exists
+    if (user.role === "student") {
+      const existingStudent = await Student.findOne({ userId: user._id });
+
+      if (!existingStudent) {
+        const newStudent = new Student({ userId: user._id });
+        await newStudent.save();
+      }
+    }
+
+    // ✅ Generate JWT token
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        role: user.role, 
+        name: user.name, 
+        isProfileVerified: user.isProfileVerified 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Account created successfully!",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role,
+        isProfileVerified: user.isProfileVerified
+      }
+    });
+
+  } catch (error) {
+    console.error("Error in verifySignupOtp:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+
 module.exports = {
   registerUser,
   verifyOtp,
@@ -787,11 +1099,11 @@ module.exports = {
 
   registerContent,
   contentManagerSignIn,
-  resendOtp
+  resendOtp,
 
-
-
-
-
-
+  // Mobile Authentication
+  sendLoginOtp,
+  verifyLoginOtp,
+  sendSignupOtp,
+  verifySignupOtp
 }
