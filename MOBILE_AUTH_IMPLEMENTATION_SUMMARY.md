@@ -47,7 +47,7 @@ Add these to your `.env` file:
 
 ```env
 # Twilio SMS Configuration
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_SID=YOUR_TWILIO_SID_HERE
 TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
 TWILIO_PHONE_NUMBER=+15551234567
 ```

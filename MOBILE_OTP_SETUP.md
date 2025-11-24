@@ -42,7 +42,7 @@ TWILIO_PHONE_NUMBER=your_twilio_phone_number_here  # Format: +1234567890
 
 **Example:**
 ```env
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_SID=YOUR_TWILIO_SID_HERE
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_PHONE_NUMBER=+15551234567
 ```
