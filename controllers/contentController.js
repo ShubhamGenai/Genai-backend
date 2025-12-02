@@ -137,7 +137,8 @@ const addCourse = async (req, res) => {
       // Create module
       const newModule = new Module({
         title: module.title,
-        lessons: lessonIds
+        lessons: lessonIds,
+        createdAt: new Date()
       });
 
       await newModule.save();
@@ -267,34 +268,67 @@ const addLesson = async (req, res) => {
 
 const addModule = async (req, res) => {
   try {
-    const { title, lessons } = req.body;
+    const { title, lessons, lessonIds } = req.body;
 
-    let lessonIds = [];
+    let finalLessonIds = [];
 
-    for (const lesson of lessons) {
-      const newLesson = new Lesson({
-        title: lesson.title,
-        videoUrl: lesson.videoUrl,
-        duration: lesson.duration,
-        practiceQuestions: lesson.practiceQuestions
-      });
+    // If lessons array exists → create lessons
+    if (lessons && Array.isArray(lessons)) {
+      for (const lesson of lessons) {
+        const newLesson = new Lesson({
+          title: lesson.title,
+          videoUrl: lesson.videoUrl,
+          duration: lesson.duration,
+          practiceQuestions: lesson.practiceQuestions
+        });
 
-      await newLesson.save();
-      lessonIds.push(newLesson._id);
+        await newLesson.save();
+        finalLessonIds.push(newLesson._id);
+      }
+    }
+
+    // If user provided only lessonIds → reuse them
+    if (lessonIds && Array.isArray(lessonIds)) {
+      finalLessonIds = [...finalLessonIds, ...lessonIds];
     }
 
     const newModule = new Module({
       title,
-      lessons: lessonIds
+      lessons: finalLessonIds
     });
 
     await newModule.save();
 
     res.status(201).json({ message: "Module created successfully", module: newModule });
   } catch (error) {
-
     res.status(400).json({ error: error.message });
+  }
+};
 
+
+const getModules = async (req, res) => {
+  try {
+    const modules = await Module.find().populate("lessons");
+    res.status(200).json({ modules });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// GET module by ID
+const getModuleById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const moduleData = await Module.findById(id).populate("lessons");
+
+    if (!moduleData) {
+      return res.status(404).json({ error: "Module not found" });
+    }
+
+    res.status(200).json({ module: moduleData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -485,6 +519,8 @@ const getQuiz = async (req, res) => {
     addQuiz,
     getQuiz,
     getLesson,
-    getLessonById
+    getLessonById,
+    getModules,
+    getModuleById
     
   }

@@ -9,6 +9,8 @@ router.post("/add-test", contentController.addTest)
 router.post("/add-quiz", contentController.addQuiz)
 router.get("/get-quiz", contentController.getQuiz)
 router.get("/get-lesson", contentController.getLesson)
+router.get("/get-module", contentController.getModules)
+router.get("/get-modulebyid", contentController.getModuleById)
 router.get("/lesson-view/:lessonId", contentController.getLessonById)
 
 
