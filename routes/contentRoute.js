@@ -7,6 +7,8 @@ router.post("/add-lesson", contentController.addLesson);
 router.post("/add-module", contentController.addModule)
 router.post("/add-test", contentController.addTest)
 router.post("/add-quiz", contentController.addQuiz)
+router.get("/get-tests", contentController.getTests)
+router.get("/get-courses", contentController.getCourses)
 router.get("/get-quiz", contentController.getQuiz)
 router.get("/get-lesson", contentController.getLesson)
 router.get("/get-module", contentController.getModules)

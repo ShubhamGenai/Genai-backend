@@ -315,6 +315,17 @@ const getModules = async (req, res) => {
   }
 };
 
+// Fetch all courses for content manager
+const getCourses = async (req, res) => {
+  try {
+    const courses = await Course.find();
+    res.status(200).json(courses);
+  } catch (error) {
+    console.error("Error fetching courses:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch courses" });
+  }
+};
+
 // GET module by ID
 const getModuleById = async (req, res) => {
   try {
@@ -454,6 +465,19 @@ const addTest = async (req, res) => {
 
 
 
+// Fetch all tests for content manager (independent from student routes)
+const getTests = async (req, res) => {
+  try {
+    const tests = await Test.find();
+    console.log(tests);
+    
+    res.status(200).json(tests);
+  } catch (error) {
+    console.error("Error fetching tests:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch tests" });
+  }
+};
+
 const addQuiz = async (req, res) => {
   try {
     const { title,duration, questions } = req.body;
@@ -521,6 +545,8 @@ const getQuiz = async (req, res) => {
     getLesson,
     getLessonById,
     getModules,
-    getModuleById
+    getModuleById,
+    getTests,
+    getCourses
     
   }
