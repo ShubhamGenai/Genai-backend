@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const LessonSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
-  content: { type: String, required: true, trim: true },
+  content: { type: String,default:"none", trim: true },
   duration: { type: Number }, // Duration in minutes
  practiceQuestions: [
     {

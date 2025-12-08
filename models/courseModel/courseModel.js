@@ -22,7 +22,7 @@ const CourseSchema = new mongoose.Schema(
       discounted: { type: Number, required: true }
     },
     category: { type: String, trim: true },
-    instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     imageUrl: { type: String ,default: getRandomImageUrl},
     level: { type: String, enum: ["Beginner", "Intermediate", "Advanced"], default: "Beginner" },
     startDate: { type: Date, default: Date.now },
