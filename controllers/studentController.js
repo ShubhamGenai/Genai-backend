@@ -675,6 +675,209 @@ const getEnrolledTests = async (req, res) => {
   }
 };
 
+// Get dashboard overview data for student
+const getDashboardOverview = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
+
+    // Find student by userId
+    const student = await Student.findOne({ userId });
+    
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    // Get enrolled courses
+    const enrolledCourseRecords = await EnrolledCourse.find({ studentId: student._id })
+      .populate('courseId', 'title level category')
+      .sort({ createdAt: -1 });
+
+    const totalCourses = enrolledCourseRecords.length;
+    const completedCourses = enrolledCourseRecords.filter(c => c.isCompleted).length;
+    const coursesInProgress = totalCourses - completedCourses;
+
+    // Get enrolled tests with attempts
+    const enrolledTestRecords = await EnrolledTest.find({ studentId: student._id })
+      .populate('testId', 'title level company')
+      .sort({ createdAt: -1 });
+
+    const totalTests = enrolledTestRecords.length;
+    const testsWithAttempts = enrolledTestRecords.filter(t => t.testAttempts && t.testAttempts.length > 0);
+    const completedTests = testsWithAttempts.length;
+    
+    // Calculate average test score
+    let totalScore = 0;
+    let scoreCount = 0;
+    const recentTestScores = [];
+    
+    enrolledTestRecords.forEach(record => {
+      if (record.testAttempts && record.testAttempts.length > 0) {
+        const latestAttempt = record.testAttempts[record.testAttempts.length - 1];
+        if (latestAttempt.score !== null && latestAttempt.score !== undefined) {
+          totalScore += latestAttempt.score;
+          scoreCount++;
+          
+          // Collect recent test scores (last 5)
+          if (recentTestScores.length < 5) {
+            recentTestScores.push({
+              title: record.testId?.title || 'Test',
+              subjects: record.testId?.company || record.testId?.level || 'General',
+              score: latestAttempt.score,
+              scoreColor: latestAttempt.score >= 80 ? 'text-green-600' : latestAttempt.score >= 60 ? 'text-blue-600' : 'text-orange-600',
+              attemptDate: latestAttempt.attemptDate
+            });
+          }
+        }
+      }
+    });
+
+    const avgTestScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
+    const previousAvgScore = avgTestScore > 0 ? Math.max(0, avgTestScore - 5) : 0; // Mock previous score
+    const scoreTrend = avgTestScore > previousAvgScore ? '+' + (avgTestScore - previousAvgScore) + '%' : '0%';
+
+    // Get job applications count (placeholder - adjust based on your job application model)
+    const jobApplicationsCount = 0; // TODO: Implement when job application model is available
+    const appliedJobsCount = 0;
+
+    // Calculate concept clarity based on test performance by subject/level
+    const conceptClarityMap = new Map();
+    enrolledTestRecords.forEach(record => {
+      if (record.testAttempts && record.testAttempts.length > 0) {
+        const latestAttempt = record.testAttempts[record.testAttempts.length - 1];
+        const subject = record.testId?.level || 'General';
+        const score = latestAttempt.score || 0;
+        
+        if (!conceptClarityMap.has(subject)) {
+          conceptClarityMap.set(subject, { total: 0, count: 0 });
+        }
+        const data = conceptClarityMap.get(subject);
+        data.total += score;
+        data.count += 1;
+      }
+    });
+
+    // Build concept clarity from map
+    const conceptClarity = Array.from(conceptClarityMap.entries())
+      .map(([subject, data]) => {
+        const progress = Math.round(data.total / data.count);
+        let level, levelColor, progressColor;
+        if (progress >= 80) {
+          level = 'Strong';
+          levelColor = 'text-green-600';
+          progressColor = 'bg-green-500';
+        } else if (progress >= 60) {
+          level = 'Good';
+          levelColor = 'text-blue-600';
+          progressColor = 'bg-blue-500';
+        } else {
+          level = 'Improving';
+          levelColor = 'text-orange-600';
+          progressColor = 'bg-orange-500';
+        }
+        return {
+          subject: subject,
+          progress,
+          level,
+          levelColor,
+          progressColor
+        };
+      })
+      .sort((a, b) => b.progress - a.progress)
+      .slice(0, 4); // Limit to 4 items
+
+    // Learning journey based on course levels
+    const foundationCourses = enrolledCourseRecords.filter(c => c.courseId?.level === 'Beginner').length;
+    const intermediateCourses = enrolledCourseRecords.filter(c => c.courseId?.level === 'Intermediate').length;
+    const advancedCourses = enrolledCourseRecords.filter(c => c.courseId?.level === 'Advanced').length;
+    
+    const foundationCompleted = enrolledCourseRecords.filter(c => c.courseId?.level === 'Beginner' && c.isCompleted).length;
+    const foundationProgress = foundationCourses > 0 ? Math.round((foundationCompleted / foundationCourses) * 100) : 0;
+    
+    const intermediateCompleted = enrolledCourseRecords.filter(c => c.courseId?.level === 'Intermediate' && c.isCompleted).length;
+    const intermediateProgress = intermediateCourses > 0 ? Math.round((intermediateCompleted / intermediateCourses) * 100) : 0;
+
+    // Actionable items
+    const actionableItems = [
+      {
+        title: "Continue Learning",
+        count: `${coursesInProgress} course${coursesInProgress !== 1 ? 's' : ''} in progress`,
+        icon: "BookOpenIcon"
+      },
+      {
+        title: "Resume Tests",
+        count: `${totalTests - completedTests} test${totalTests - completedTests !== 1 ? 's' : ''} pending`,
+        icon: "FileTextIcon"
+      },
+      {
+        title: "Complete Applications",
+        count: `${jobApplicationsCount} draft${jobApplicationsCount !== 1 ? 's' : ''} to finish`,
+        icon: "BriefcaseIcon"
+      }
+    ];
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summaryCards: {
+          totalCourses: {
+            value: totalCourses,
+            subtitle: `${completedCourses} completed`
+          },
+          testsTaken: {
+            value: totalTests,
+            subtitle: `${completedTests} completed`
+          },
+          jobApplications: {
+            value: jobApplicationsCount,
+            subtitle: `${appliedJobsCount} applied`
+          },
+          avgTestScore: {
+            value: `${avgTestScore}%`,
+            subtitle: scoreTrend,
+            trend: avgTestScore > previousAvgScore ? 'up' : 'neutral'
+          }
+        },
+        conceptClarity,
+        recentTestScores: recentTestScores.sort((a, b) => new Date(b.attemptDate) - new Date(a.attemptDate)),
+        learningJourney: [
+          {
+            stage: "Foundation",
+            courses: `${foundationCourses} course${foundationCourses !== 1 ? 's' : ''}`,
+            progress: foundationProgress,
+            completed: foundationProgress === 100
+          },
+          {
+            stage: "Intermediate",
+            courses: `${intermediateCourses} course${intermediateCourses !== 1 ? 's' : ''}`,
+            progress: intermediateProgress,
+            completed: intermediateProgress === 100
+          },
+          {
+            stage: "Advanced",
+            courses: `${advancedCourses} course${advancedCourses !== 1 ? 's' : ''}`,
+            progress: 0,
+            completed: false
+          },
+          {
+            stage: "Specialization",
+            courses: "0 courses",
+            progress: 0,
+            completed: false
+          }
+        ],
+        actionableItems
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard overview:', error);
+    res.status(500).json({ message: "Error fetching dashboard overview", error: error.message });
+  }
+};
+
 const getLatestCoursesAndTests = async (req, res) => {
   try {
     const latestCourses = await Course.find()
@@ -731,5 +934,6 @@ const getLatestCoursesAndTests = async (req, res) => {
     createCartOrder,
     verifyCartPayment,
 
-    getLatestCoursesAndTests
+    getLatestCoursesAndTests,
+    getDashboardOverview
   };

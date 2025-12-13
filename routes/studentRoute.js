@@ -46,6 +46,9 @@ router.get("/get-latest-Course-test",studentController.getLatestCoursesAndTests)
 // Get enrolled tests
 router.get("/getEnrolledTests", authMiddleware, studentController.getEnrolledTests);
 
+// Get dashboard overview
+router.get("/getDashboardOverview", authMiddleware, studentController.getDashboardOverview);
+
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
 // router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);
