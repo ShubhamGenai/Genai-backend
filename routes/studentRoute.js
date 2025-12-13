@@ -43,7 +43,8 @@ router.post("/verify-cart-payment",authMiddleware,studentController.verifyCartPa
 
 router.get("/get-latest-Course-test",studentController.getLatestCoursesAndTests)    
 
-
+// Get enrolled tests
+router.get("/getEnrolledTests", authMiddleware, studentController.getEnrolledTests);
 
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);

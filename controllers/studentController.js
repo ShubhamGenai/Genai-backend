@@ -615,6 +615,66 @@ const verifyCartPayment = async (req, res) => {
 
 
 
+// Get enrolled tests for the authenticated student
+const getEnrolledTests = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
+
+    // Find student by userId
+    const student = await Student.findOne({ userId }).populate({
+      path: 'enrolledTests',
+      model: 'Test',
+      select: 'title description image duration numberOfQuestions level price company features skills averageRating enrolledStudents'
+    });
+
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    // Also get EnrolledTest records for attempt history
+    const enrolledTestRecords = await EnrolledTest.find({ studentId: student._id })
+      .populate('testId', 'title description image duration numberOfQuestions level')
+      .sort({ createdAt: -1 });
+
+    // Combine test data with enrollment info
+    const enrolledTests = enrolledTestRecords.map(record => {
+      const test = record.testId;
+      const latestAttempt = record.testAttempts && record.testAttempts.length > 0
+        ? record.testAttempts[record.testAttempts.length - 1]
+        : null;
+
+      return {
+        _id: test?._id,
+        id: test?._id,
+        title: test?.title || '',
+        description: test?.description || '',
+        image: test?.image || '',
+        duration: test?.duration || 0,
+        numberOfQuestions: test?.numberOfQuestions || 0,
+        level: test?.level || 'Beginner',
+        company: test?.company || '',
+        enrolledDate: record.createdAt,
+        paymentStatus: record.paymentStatus,
+        isPassed: record.isPassed,
+        latestScore: latestAttempt?.score || null,
+        latestStatus: latestAttempt?.status || null,
+        latestAttemptDate: latestAttempt?.attemptDate || null,
+        totalAttempts: record.testAttempts?.length || 0,
+        certificateUrl: record.certificateUrl || null
+      };
+    });
+
+    res.status(200).json({ success: true, tests: enrolledTests });
+  } catch (error) {
+    console.error('Error fetching enrolled tests:', error);
+    res.status(500).json({ message: "Error fetching enrolled tests", error: error.message });
+  }
+};
+
 const getLatestCoursesAndTests = async (req, res) => {
   try {
     const latestCourses = await Course.find()
@@ -652,6 +712,7 @@ const getLatestCoursesAndTests = async (req, res) => {
     getTests,
     getCourseById,
     getTestById,
+    getEnrolledTests,
     getTestCategories,
     addToCart,
     checkItemInCart,
