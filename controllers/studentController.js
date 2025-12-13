@@ -259,6 +259,171 @@ const getCourse = async (req, res) => {
     }
   };
 
+  // Submit test with detailed results
+  const submitTest = async (req, res) => {
+    try {
+      const userId = req.user?.id || req.user?._id;
+      const {
+        testId,
+        answers,
+        questions,
+        startTime,
+        endTime,
+        duration,
+        markedQuestions
+      } = req.body;
+
+      if (!testId || !answers || !questions) {
+        return res.status(400).json({ message: 'Missing required fields: testId, answers, and questions are required' });
+      }
+
+      // Find student by userId
+      const student = await Student.findOne({ userId });
+      if (!student) {
+        return res.status(404).json({ message: 'Student not found' });
+      }
+
+      // Calculate results
+      let correctAnswers = 0;
+      let incorrectAnswers = 0;
+      let unanswered = 0;
+      let totalMarks = 0;
+      let obtainedMarks = 0;
+
+      const detailedAnswers = questions.map((question, index) => {
+        const questionId = question.id || question._id || index;
+        const selectedAnswer = answers[questionId];
+        const correctAnswer = question.correctAnswer || question.answer;
+        const marks = question.marks || 1;
+        
+        totalMarks += marks;
+        
+        let isCorrect = false;
+        if (selectedAnswer !== null && selectedAnswer !== undefined) {
+          // Compare selected answer with correct answer
+          if (typeof selectedAnswer === 'number') {
+            // If answer is an index, get the option value
+            const selectedOption = question.options && question.options[selectedAnswer] 
+              ? question.options[selectedAnswer] 
+              : null;
+            isCorrect = selectedOption === correctAnswer || String(selectedAnswer) === String(correctAnswer);
+          } else {
+            isCorrect = String(selectedAnswer) === String(correctAnswer);
+          }
+          
+          if (isCorrect) {
+            correctAnswers++;
+            obtainedMarks += marks;
+          } else {
+            incorrectAnswers++;
+            // Apply negative marking if needed (typically -0.25 marks per wrong answer)
+            obtainedMarks -= marks * 0.25;
+          }
+        } else {
+          unanswered++;
+        }
+
+        return {
+          questionId: questionId,
+          quizId: question.quizId || '',
+          questionIndex: index,
+          questionText: question.question || question.questionText || '',
+          options: question.options || [],
+          selectedOption: selectedAnswer !== null && selectedAnswer !== undefined 
+            ? (typeof selectedAnswer === 'number' && question.options 
+                ? question.options[selectedAnswer] 
+                : selectedAnswer)
+            : null,
+          correctAnswer: correctAnswer,
+          isCorrect: isCorrect,
+          marks: marks,
+          obtainedMarks: isCorrect ? marks : (selectedAnswer !== null && selectedAnswer !== undefined ? -(marks * 0.25) : 0)
+        };
+      });
+
+      // Calculate percentage score
+      const score = totalMarks > 0 ? Math.round((obtainedMarks / totalMarks) * 100) : 0;
+      const scorePercentage = Math.max(0, score); // Ensure non-negative
+
+      // Get test to check passing score
+      const test = await Test.findById(testId);
+      const passingScore = test?.passingScore || 50;
+      const status = scorePercentage >= passingScore ? 'passed' : 'failed';
+
+      // Find or create EnrolledTest record
+      let enrolledTest = await EnrolledTest.findOne({ 
+        studentId: student._id, 
+        testId: testId 
+      });
+
+      if (!enrolledTest) {
+        // Create new EnrolledTest record
+        enrolledTest = await EnrolledTest.create({
+          studentId: student._id,
+          testId: testId,
+          paymentStatus: 'completed', // Assume completed if they're taking the test
+        });
+      }
+
+      // Add attempt to testAttempts array
+      enrolledTest.testAttempts.push({
+        attemptDate: endTime ? new Date(endTime) : new Date(),
+        score: scorePercentage,
+        correctAnswers: correctAnswers,
+        incorrectAnswers: incorrectAnswers,
+        status: status
+      });
+
+      // Update isPassed if this attempt passed
+      if (status === 'passed' && !enrolledTest.isPassed) {
+        enrolledTest.isPassed = true;
+      }
+
+      await enrolledTest.save();
+
+      // Save detailed submission
+      const submission = new SubmissionModel({
+        user: userId,
+        testId: testId,
+        quizIds: test?.quizzes || [],
+        answers: detailedAnswers,
+        startTime: startTime ? new Date(startTime) : new Date(),
+        endTime: endTime ? new Date(endTime) : new Date(),
+        duration: duration || '0',
+        markedQuestions: markedQuestions || [],
+        totalQuestions: questions.length,
+        totalMarks: totalMarks,
+        obtainedMarks: Math.max(0, obtainedMarks),
+        percentageScore: scorePercentage,
+        status: status
+      });
+
+      await submission.save();
+
+      res.status(201).json({
+        success: true,
+        message: 'Test submitted successfully',
+        submissionId: submission._id,
+        results: {
+          totalQuestions: questions.length,
+          correctAnswers,
+          incorrectAnswers,
+          unanswered,
+          totalMarks,
+          obtainedMarks: Math.max(0, obtainedMarks), // Ensure non-negative
+          score: scorePercentage,
+          status,
+          passingScore,
+          detailedAnswers,
+          attemptDate: new Date()
+        }
+      });
+    } catch (error) {
+      console.error('Test submission failed:', error);
+      res.status(500).json({ message: 'Server error while submitting test', error: error.message });
+    }
+  };
+
 
 
   const razorpay = new Razorpay({
@@ -640,12 +805,53 @@ const getEnrolledTests = async (req, res) => {
       .populate('testId', 'title description image duration numberOfQuestions level')
       .sort({ createdAt: -1 });
 
-    // Combine test data with enrollment info
-    const enrolledTests = enrolledTestRecords.map(record => {
+    // Combine test data with enrollment info and all attempts
+    const enrolledTests = await Promise.all(enrolledTestRecords.map(async (record) => {
       const test = record.testId;
       const latestAttempt = record.testAttempts && record.testAttempts.length > 0
         ? record.testAttempts[record.testAttempts.length - 1]
         : null;
+
+      // Find latest submission for this test
+      let latestSubmissionId = null;
+      if (latestAttempt) {
+        const submission = await SubmissionModel.findOne({
+          user: userId,
+          testId: test?._id,
+          endTime: { 
+            $gte: new Date(new Date(latestAttempt.attemptDate).getTime() - 5 * 60 * 1000),
+            $lte: new Date(new Date(latestAttempt.attemptDate).getTime() + 5 * 60 * 1000)
+          }
+        }).sort({ createdAt: -1 });
+        latestSubmissionId = submission?._id || null;
+      }
+
+      // Get all attempts sorted by date (newest first)
+      const allAttempts = record.testAttempts && record.testAttempts.length > 0
+        ? await Promise.all([...record.testAttempts]
+            .sort((a, b) => new Date(b.attemptDate) - new Date(a.attemptDate))
+            .map(async (attempt, index) => {
+              // Find matching submission for each attempt
+              const submission = await SubmissionModel.findOne({
+                user: userId,
+                testId: test?._id,
+                endTime: { 
+                  $gte: new Date(new Date(attempt.attemptDate).getTime() - 5 * 60 * 1000),
+                  $lte: new Date(new Date(attempt.attemptDate).getTime() + 5 * 60 * 1000)
+                }
+              }).sort({ createdAt: -1 });
+
+              return {
+                attemptNumber: record.testAttempts.length - index,
+                attemptDate: attempt.attemptDate,
+                score: attempt.score,
+                correctAnswers: attempt.correctAnswers,
+                incorrectAnswers: attempt.incorrectAnswers,
+                status: attempt.status,
+                submissionId: submission?._id || null
+              };
+            }))
+        : [];
 
       return {
         _id: test?._id,
@@ -663,15 +869,147 @@ const getEnrolledTests = async (req, res) => {
         latestScore: latestAttempt?.score || null,
         latestStatus: latestAttempt?.status || null,
         latestAttemptDate: latestAttempt?.attemptDate || null,
+        latestSubmissionId: latestSubmissionId, // Add latest submission ID
         totalAttempts: record.testAttempts?.length || 0,
+        attempts: allAttempts, // Include all attempts
         certificateUrl: record.certificateUrl || null
       };
-    });
+    }));
 
     res.status(200).json({ success: true, tests: enrolledTests });
   } catch (error) {
     console.error('Error fetching enrolled tests:', error);
     res.status(500).json({ message: "Error fetching enrolled tests", error: error.message });
+  }
+};
+
+// Get test submission history for a specific test
+const getTestSubmissionHistory = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { testId } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
+
+    if (!testId) {
+      return res.status(400).json({ message: "Test ID is required" });
+    }
+
+    // Find student by userId
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    // Get EnrolledTest record with all attempts
+    const enrolledTest = await EnrolledTest.findOne({ 
+      studentId: student._id, 
+      testId: testId 
+    }).populate('testId', 'title description image duration numberOfQuestions level passingScore');
+
+    if (!enrolledTest) {
+      return res.status(404).json({ message: "Test enrollment not found" });
+    }
+
+    // Get all submissions for this test
+    const submissions = await SubmissionModel.find({
+      user: userId,
+      testId: testId
+    })
+      .sort({ createdAt: -1 })
+      .limit(10); // Get last 10 submissions
+
+    // Format attempts with submission details
+    const attempts = enrolledTest.testAttempts
+      .map((attempt, index) => {
+        // Try to find matching submission
+        const matchingSubmission = submissions.find(sub => {
+          const subDate = new Date(sub.endTime || sub.createdAt);
+          const attemptDate = new Date(attempt.attemptDate);
+          // Match if dates are within 5 minutes of each other
+          return Math.abs(subDate - attemptDate) < 5 * 60 * 1000;
+        });
+
+        return {
+          attemptNumber: enrolledTest.testAttempts.length - index,
+          attemptDate: attempt.attemptDate,
+          score: attempt.score,
+          correctAnswers: attempt.correctAnswers,
+          incorrectAnswers: attempt.incorrectAnswers,
+          status: attempt.status,
+          submissionId: matchingSubmission?._id || null,
+          hasDetails: !!matchingSubmission
+        };
+      })
+      .sort((a, b) => new Date(b.attemptDate) - new Date(a.attemptDate));
+
+    res.status(200).json({
+      success: true,
+      test: enrolledTest.testId,
+      enrolledTest: {
+        enrolledDate: enrolledTest.createdAt,
+        paymentStatus: enrolledTest.paymentStatus,
+        isPassed: enrolledTest.isPassed,
+        certificateUrl: enrolledTest.certificateUrl,
+        totalAttempts: enrolledTest.testAttempts.length
+      },
+      attempts: attempts
+    });
+  } catch (error) {
+    console.error('Error fetching test submission history:', error);
+    res.status(500).json({ message: "Error fetching test submission history", error: error.message });
+  }
+};
+
+// Get detailed submission results
+const getTestSubmissionDetails = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { submissionId } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
+
+    if (!submissionId) {
+      return res.status(400).json({ message: "Submission ID is required" });
+    }
+
+    // Get submission
+    const submission = await SubmissionModel.findById(submissionId);
+
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found" });
+    }
+
+    // Verify it belongs to the user
+    if (submission.user.toString() !== userId.toString()) {
+      return res.status(403).json({ message: "Unauthorized access to submission" });
+    }
+
+    res.status(200).json({
+      success: true,
+      submission: {
+        _id: submission._id,
+        testId: submission.testId,
+        startTime: submission.startTime,
+        endTime: submission.endTime,
+        duration: submission.duration,
+        markedQuestions: submission.markedQuestions || [],
+        totalQuestions: submission.totalQuestions,
+        totalMarks: submission.totalMarks,
+        obtainedMarks: submission.obtainedMarks,
+        percentageScore: submission.percentageScore,
+        status: submission.status,
+        answers: submission.answers || [],
+        createdAt: submission.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching submission details:', error);
+    res.status(500).json({ message: "Error fetching submission details", error: error.message });
   }
 };
 
@@ -714,26 +1052,40 @@ const getDashboardOverview = async (req, res) => {
     let scoreCount = 0;
     const recentTestScores = [];
     
-    enrolledTestRecords.forEach(record => {
+    // Process records with async operations
+    for (const record of enrolledTestRecords) {
       if (record.testAttempts && record.testAttempts.length > 0) {
         const latestAttempt = record.testAttempts[record.testAttempts.length - 1];
         if (latestAttempt.score !== null && latestAttempt.score !== undefined) {
           totalScore += latestAttempt.score;
           scoreCount++;
           
-          // Collect recent test scores (last 5)
+          // Collect recent test scores (last 5) with submission ID
           if (recentTestScores.length < 5) {
+            // Find matching submission for this attempt
+            const submission = await SubmissionModel.findOne({
+              user: userId,
+              testId: record.testId?._id,
+              endTime: { 
+                $gte: new Date(new Date(latestAttempt.attemptDate).getTime() - 5 * 60 * 1000),
+                $lte: new Date(new Date(latestAttempt.attemptDate).getTime() + 5 * 60 * 1000)
+              }
+            }).sort({ createdAt: -1 });
+
             recentTestScores.push({
+              testId: record.testId?._id,
               title: record.testId?.title || 'Test',
               subjects: record.testId?.company || record.testId?.level || 'General',
               score: latestAttempt.score,
               scoreColor: latestAttempt.score >= 80 ? 'text-green-600' : latestAttempt.score >= 60 ? 'text-blue-600' : 'text-orange-600',
-              attemptDate: latestAttempt.attemptDate
+              attemptDate: latestAttempt.attemptDate,
+              status: latestAttempt.status,
+              submissionId: submission?._id || null
             });
           }
         }
       }
-    });
+    }
 
     const avgTestScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
     const previousAvgScore = avgTestScore > 0 ? Math.max(0, avgTestScore - 5) : 0; // Mock previous score
@@ -935,5 +1287,8 @@ const getLatestCoursesAndTests = async (req, res) => {
     verifyCartPayment,
 
     getLatestCoursesAndTests,
-    getDashboardOverview
+    getDashboardOverview,
+    submitTest,
+    getTestSubmissionHistory,
+    getTestSubmissionDetails
   };

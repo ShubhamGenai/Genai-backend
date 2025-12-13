@@ -17,6 +17,7 @@ router.delete("/removeFromCart",authMiddleware,studentController.removeFromCart)
 //test - player
 router.post("/getQuiz",studentController.getQuiz);
 router.post("/submitQuiz",authMiddleware,studentController.submitQuiz)
+router.post("/submitTest",authMiddleware,studentController.submitTest)
 
 //test payment
 router.post("/create-payment",authMiddleware,studentController.createOrder);
@@ -48,6 +49,12 @@ router.get("/getEnrolledTests", authMiddleware, studentController.getEnrolledTes
 
 // Get dashboard overview
 router.get("/getDashboardOverview", authMiddleware, studentController.getDashboardOverview);
+
+// Get test submission history
+router.get("/getTestSubmissionHistory/:testId", authMiddleware, studentController.getTestSubmissionHistory);
+
+// Get detailed submission results
+router.get("/getTestSubmissionDetails/:submissionId", authMiddleware, studentController.getTestSubmissionDetails);
 
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
