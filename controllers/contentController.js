@@ -9,6 +9,8 @@ const User = require("../models/UserModel");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
+const pdfParserService = require("../services/pdfParserService");
 
 // const addCourse = async (req, res) => {
 //   try {
@@ -1167,6 +1169,35 @@ const upload = multer({
   }
 });
 
+// File filter for images
+const imageFilter = (req, file, cb) => {
+  // Accept image files
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed'), false);
+  }
+};
+
+// Multer storage for images (memory storage for Cloudinary)
+const imageStorage = multer.memoryStorage();
+const uploadImage = multer({
+  storage: imageStorage,
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit for images
+  }
+});
+
+// Configure Cloudinary (if not already configured)
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
+
 // Upload library document
 const uploadLibraryDocument = async (req, res) => {
   try {
@@ -1221,6 +1252,111 @@ const uploadLibraryDocument = async (req, res) => {
 
     res.status(400).json({
       error: error.message || "Failed to upload library document"
+    });
+  }
+};
+
+// Parse PDF and extract questions
+const parsePDFUpload = async (req, res) => {
+  try {
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ error: "PDF file is required" });
+    }
+
+    // Read PDF file
+    const pdfBuffer = fs.readFileSync(file.path);
+    
+    // Parse PDF
+    const parsedData = await pdfParserService.parsePDF(pdfBuffer);
+    
+    // Validate parsed questions
+    const validation = pdfParserService.validateQuestions(parsedData.questions);
+    
+    // Clean up uploaded file
+    fs.unlinkSync(file.path);
+    
+    res.status(200).json({
+      success: true,
+      message: "PDF parsed successfully",
+      data: {
+        totalPages: parsedData.totalPages,
+        totalQuestions: parsedData.totalQuestions,
+        questions: parsedData.questions,
+        validation: validation
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error parsing PDF:", error);
+    
+    // Clean up uploaded file on error
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(400).json({
+      error: error.message || "Failed to parse PDF"
+    });
+  }
+};
+
+// Upload question image/diagram
+const uploadQuestionImage = async (req, res) => {
+  try {
+    const file = req.file;
+    const { questionId } = req.body;
+    
+    if (!file) {
+      return res.status(400).json({ error: "Image file is required" });
+    }
+
+    // Upload to Cloudinary
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      // Convert buffer to base64 data URI
+      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      
+      const uploadResult = await cloudinary.uploader.upload(base64Image, {
+        folder: 'test-questions',
+        resource_type: 'image',
+        transformation: [
+          { quality: 'auto' },
+          { fetch_format: 'auto' }
+        ]
+      });
+      
+      res.status(200).json({
+        success: true,
+        message: "Image uploaded successfully",
+        imageUrl: uploadResult.secure_url,
+        publicId: uploadResult.public_id
+      });
+    } else {
+      // Fallback: Save to local storage if Cloudinary not configured
+      const uploadDir = path.join(__dirname, '../uploads/question-images');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      
+      const filename = Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
+      const filepath = path.join(uploadDir, filename);
+      
+      fs.writeFileSync(filepath, file.buffer);
+      
+      const imageUrl = `${req.protocol}://${req.get('host')}/uploads/question-images/${filename}`;
+      
+      res.status(200).json({
+        success: true,
+        message: "Image uploaded successfully",
+        imageUrl: imageUrl
+      });
+    }
+    
+  } catch (error) {
+    console.error("Error uploading image:", error);
+    res.status(400).json({
+      error: error.message || "Failed to upload image"
     });
   }
 };
@@ -1393,5 +1529,8 @@ const getRecentActivities = async (req, res) => {
     getLibraryDocuments,
     getDashboardStats,
     getRecentActivities,
-    upload // Export multer upload middleware
+    upload, // Export multer upload middleware
+    uploadImage, // Export image upload middleware
+    parsePDFUpload,
+    uploadQuestionImage
   }
