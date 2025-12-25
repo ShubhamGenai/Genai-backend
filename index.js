@@ -1,21 +1,38 @@
+// Suppress optional dependency warnings (@napi-rs/canvas from jsdom)
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = function(warning, ...args) {
+  if (typeof warning === 'string' && warning.includes('@napi-rs/canvas')) {
+    return;
+  }
+  return originalEmitWarning.call(process, warning, ...args);
+};
+
+const originalWarn = console.warn;
+console.warn = function(...args) {
+  const message = args.join(' ');
+  if (message.includes('@napi-rs/canvas') || 
+      message.includes('Cannot load "@napi-rs/canvas"') ||
+      message.includes('Cannot find module \'@napi-rs/canvas\'')) {
+    return;
+  }
+  return originalWarn.apply(console, args);
+};
+
+// Core dependencies
 const express = require("express");
 const dotenv = require("dotenv");
-const mongoose = require("mongoose");
 const cors = require("cors");
-const bodyParser = require("body-parser");
 const helmet = require("helmet");
-const passport = require("passport");
 const compression = require("compression");
 const morgan = require("morgan");
 const path = require("path");
-const jwt = require("jsonwebtoken");
-const errorHandler = require("./middlewares/errorHandlers");
-const MongoDB = require("./config/db");
-const axios = require("axios");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
+const passport = require("passport");
 
-// Import routes
+// Local modules
+const errorHandler = require("./middlewares/errorHandlers");
+const MongoDB = require("./config/db");
 const authRoute = require("./routes/authRoute");
 const contentRoute = require("./routes/contentRoute");
 const adminRoute = require("./routes/adminRoute");
@@ -28,14 +45,14 @@ dotenv.config();
 // Initialize Express app
 const app = express();
 
-// ✅ CORS Configuration
+// CORS Configuration
 const allowedOrigins = [
   "https://genai-frontend-xi.vercel.app",
-  "https://www.genailearning.in", // production frontend
-  "http://localhost:5173",        // local dev
+  "https://www.genailearning.in",
+  "http://localhost:5173",
 ];
 
-const corsOptions = {
+app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -45,23 +62,19 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
-};
+}));
 
-// Apply CORS first
-app.use(cors(corsOptions));
-
-// ✅ Apply security, compression, and logging middleware
+// Middleware
 app.use(helmet());
 app.use(compression());
-app.use(bodyParser.json());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 
-// ✅ Connect to MongoDB
+// Database connection
 MongoDB();
 
-// ✅ Setup session store using MongoDB
+// Session configuration
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecretkey",
@@ -70,41 +83,40 @@ app.use(
     store: MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
       collectionName: "sessions",
-      ttl: 14 * 24 * 60 * 60, // 14 days
+      ttl: 14 * 24 * 60 * 60,
     }),
     cookie: {
-      secure: process.env.NODE_ENV === "production", // only true over HTTPS
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
+      maxAge: 1000 * 60 * 60 * 24,
     },
   })
 );
 
-// ✅ Passport initialization
+// Passport initialization
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ✅ Static file hosting
+// Static files
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ✅ Test route
+// Routes
 app.get("/", (req, res) => {
   res.json("Hello from the API!");
 });
 
-// ✅ API routes
 app.use("/api/auth", authRoute);
 app.use("/api/content", contentRoute);
 app.use("/api/admin", adminRoute);
 app.use("/api/employer", employerRoute);
 app.use("/api/student", studentRoute);
 
-// ✅ Global error handler
+// Error handler
 app.use(errorHandler);
 
-// ✅ Start server
+// Start server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
