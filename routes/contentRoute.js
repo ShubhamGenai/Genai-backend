@@ -28,7 +28,6 @@ router.post("/upload-library-document", contentController.upload.single('pdfFile
 router.get("/get-library-documents", contentController.getLibraryDocuments)
 router.get("/dashboard-stats", contentController.getDashboardStats)
 router.get("/recent-activities", contentController.getRecentActivities)
-// router.post("/parse-pdf", contentController.upload.single('pdfFile'), contentController.parsePDFUpload)
 // router.post("/upload-question-image", contentController.uploadImage.single('imageFile'), contentController.uploadQuestionImage)
 
 

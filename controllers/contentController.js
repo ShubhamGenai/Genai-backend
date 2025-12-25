@@ -10,7 +10,6 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const cloudinary = require("cloudinary").v2;
-const pdfParserService = require("../services/pdfParserService");
 
 // const addCourse = async (req, res) => {
 //   try {
@@ -1256,52 +1255,6 @@ const uploadLibraryDocument = async (req, res) => {
   }
 };
 
-// Parse PDF and extract questions
-const parsePDFUpload = async (req, res) => {
-  try {
-    const file = req.file;
-    
-    if (!file) {
-      return res.status(400).json({ error: "PDF file is required" });
-    }
-
-    // Read PDF file
-    const pdfBuffer = fs.readFileSync(file.path);
-    
-    // Parse PDF
-    const parsedData = await pdfParserService.parsePDF(pdfBuffer);
-    
-    // Validate parsed questions
-    const validation = pdfParserService.validateQuestions(parsedData.questions);
-    
-    // Clean up uploaded file
-    fs.unlinkSync(file.path);
-    
-    res.status(200).json({
-      success: true,
-      message: "PDF parsed successfully",
-      data: {
-        totalPages: parsedData.totalPages,
-        totalQuestions: parsedData.totalQuestions,
-        questions: parsedData.questions,
-        validation: validation
-      }
-    });
-    
-  } catch (error) {
-    console.error("Error parsing PDF:", error);
-    
-    // Clean up uploaded file on error
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    
-    res.status(400).json({
-      error: error.message || "Failed to parse PDF"
-    });
-  }
-};
-
 // Upload question image/diagram
 const uploadQuestionImage = async (req, res) => {
   try {
@@ -1531,6 +1484,5 @@ const getRecentActivities = async (req, res) => {
     getRecentActivities,
     upload, // Export multer upload middleware
     uploadImage, // Export image upload middleware
-    parsePDFUpload,
     uploadQuestionImage
   }
