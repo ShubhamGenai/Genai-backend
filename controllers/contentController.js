@@ -993,20 +993,80 @@ const getTestById = async (req, res) => {
 
 const addQuiz = async (req, res) => {
   try {
-    const { title,duration, questions } = req.body;
+    console.log('Add quiz request body:', JSON.stringify(req.body, null, 2));
+    const { title, duration, questions } = req.body;
 
     // ✅ Validate data
-    if (!title || !questions || questions.length === 0) {
-      return res.status(400).json({ error: "Title and at least one question are required." });
+    if (!title || title.trim() === '') {
+      return res.status(400).json({ error: "Quiz title is required." });
+    }
+
+    if (!duration || duration === '' || isNaN(parseInt(duration))) {
+      return res.status(400).json({ error: "Valid duration (in minutes) is required." });
+    }
+
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: "At least one question is required." });
+    }
+
+    // Validate each question
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      if (!q.questionText || q.questionText.trim() === '') {
+        return res.status(400).json({ error: `Question ${i + 1}: Question text is required.` });
+      }
+      if (!q.options || !Array.isArray(q.options) || q.options.length < 2) {
+        return res.status(400).json({ error: `Question ${i + 1}: At least 2 options are required.` });
+      }
+      // Check if at least 2 options have text
+      const validOptions = q.options.filter(opt => opt && opt.trim() !== '');
+      if (validOptions.length < 2) {
+        return res.status(400).json({ error: `Question ${i + 1}: At least 2 valid options are required.` });
+      }
+      if (!q.answer || q.answer.trim() === '') {
+        return res.status(400).json({ error: `Question ${i + 1}: Correct answer is required.` });
+      }
+      // Check if answer matches one of the options
+      if (!q.options.includes(q.answer)) {
+        return res.status(400).json({ error: `Question ${i + 1}: Answer must match one of the options.` });
+      }
     }
 
     // ✅ Save the quiz
-    const newQuiz = new Quiz({ title,duration, questions });
+    const newQuiz = new Quiz({ 
+      title: title.trim(), 
+      duration: parseInt(duration), 
+      questions: questions.map(q => ({
+        questionText: q.questionText.trim(),
+        options: q.options.map(opt => opt.trim()).filter(opt => opt !== ''),
+        answer: q.answer.trim(),
+        imageUrl: q.imageUrl || '',
+        marks: q.marks || 1
+      }))
+    });
+    
     await newQuiz.save();
 
+    console.log('Quiz saved successfully:', newQuiz._id);
     res.status(201).json({ message: "Quiz added successfully", quiz: newQuiz });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Error adding quiz:', error);
+    console.error('Error details:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: validationErrors 
+      });
+    }
+    
+    res.status(400).json({ 
+      error: error.message || "Failed to create quiz",
+      details: error.toString()
+    });
   }
 };
 

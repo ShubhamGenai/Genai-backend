@@ -10,13 +10,13 @@ const QuizSchema = new mongoose.Schema({
       answer: { type: String, required: true },
       imageUrl: { 
         type: String, 
-        default: null,
+        default: '',
         validate: {
           validator: function(v) {
-            // Allow null/empty or valid URL (Cloudinary URLs)
-            return !v || /^https?:\/\/.+/.test(v);
+            // Allow empty string or valid URL (Cloudinary URLs)
+            return !v || v === '' || /^https?:\/\/.+/.test(v);
           },
-          message: 'imageUrl must be a valid URL (Cloudinary URL)'
+          message: 'imageUrl must be a valid URL (Cloudinary URL) or empty'
         }
       }, // Cloudinary URL for question images/diagrams
       imagePublicId: { type: String, default: null }, // Cloudinary public_id for image management
