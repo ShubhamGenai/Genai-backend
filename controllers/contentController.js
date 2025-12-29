@@ -1178,24 +1178,45 @@ const imageFilter = (req, file, cb) => {
   }
 };
 
-// Multer storage for images (memory storage for Cloudinary)
+// Multer storage for images (memory storage only - no local files saved)
+// Images are uploaded directly to Cloudinary, no local storage used
 const imageStorage = multer.memoryStorage();
 const uploadImage = multer({
-  storage: imageStorage,
+  storage: imageStorage, // Memory storage - files are kept in RAM, not saved to disk
   fileFilter: imageFilter,
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit for images
   }
 });
 
-// Configure Cloudinary (if not already configured)
-if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-  });
-}
+// Configure Cloudinary
+const configureCloudinary = () => {
+  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+    console.log('Cloudinary configured successfully');
+    return true;
+  } else {
+    console.warn('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your .env file');
+    return false;
+  }
+};
+
+// Initialize Cloudinary on module load
+configureCloudinary();
+
+// Cloudinary folder structure helper
+const CLOUDINARY_FOLDERS = {
+  QUIZ_QUESTIONS: 'quiz/question-images',      // Quiz question images/diagrams
+  COURSE_THUMBNAILS: 'courses/thumbnails',     // Course thumbnail images
+  LESSON_IMAGES: 'lessons/images',              // Lesson images
+  TEST_IMAGES: 'tests/images',                 // Test images
+  USER_AVATARS: 'users/avatars',               // User profile pictures
+  LIBRARY_DOCS: 'library/documents'            // Library document images
+};
 
 // Upload library document
 const uploadLibraryDocument = async (req, res) => {
@@ -1256,8 +1277,11 @@ const uploadLibraryDocument = async (req, res) => {
 };
 
 // Upload question image/diagram
+// IMPORTANT: Images are uploaded directly to Cloudinary - NO local storage
+// The Cloudinary URL is returned and stored in the database
 const uploadQuestionImage = async (req, res) => {
   try {
+    console.log('Upload question image endpoint hit');
     const file = req.file;
     const { questionId } = req.body;
     
@@ -1265,44 +1289,62 @@ const uploadQuestionImage = async (req, res) => {
       return res.status(400).json({ error: "Image file is required" });
     }
 
-    // Upload to Cloudinary
-    if (process.env.CLOUDINARY_CLOUD_NAME) {
-      // Convert buffer to base64 data URI
+    // Check if Cloudinary is configured (REQUIRED - no fallback to local storage)
+    const cloudinaryConfigured = 
+      process.env.CLOUDINARY_CLOUD_NAME && 
+      process.env.CLOUDINARY_API_KEY && 
+      process.env.CLOUDINARY_API_SECRET;
+
+    if (!cloudinaryConfigured) {
+      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+      return res.status(500).json({ 
+        error: "Cloudinary is not configured. Please set the required environment variables.",
+        details: "Images are uploaded directly to Cloudinary. No local storage is used."
+      });
+    }
+
+    // Upload directly to Cloudinary (NO local file saving)
+    try {
+      // Convert buffer to base64 data URI for Cloudinary upload
       const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
       
+      // Upload to Cloudinary with optimized settings
+      // Organized folder structure: quiz/question-images
       const uploadResult = await cloudinary.uploader.upload(base64Image, {
-        folder: 'test-questions',
+        folder: CLOUDINARY_FOLDERS.QUIZ_QUESTIONS, // Organized folder: quiz/question-images
         resource_type: 'image',
         transformation: [
-          { quality: 'auto' },
-          { fetch_format: 'auto' }
-        ]
+          { quality: 'auto' }, // Automatic quality optimization
+          { fetch_format: 'auto' } // Automatic format selection (WebP when supported)
+        ],
+        overwrite: false, // Don't overwrite existing images
+        invalidate: true, // Invalidate CDN cache
+        use_filename: true, // Use original filename
+        unique_filename: true // Add unique suffix to prevent conflicts
       });
       
+      console.log('✅ Image uploaded to Cloudinary successfully');
+      console.log('   URL:', uploadResult.secure_url);
+      console.log('   Public ID:', uploadResult.public_id);
+      console.log('   Size:', uploadResult.bytes, 'bytes');
+      
+      // Return Cloudinary URL and metadata - these will be stored in the database
+      // The imageUrl (Cloudinary secure URL) is what gets stored in the Quiz schema
       res.status(200).json({
         success: true,
-        message: "Image uploaded successfully",
-        imageUrl: uploadResult.secure_url,
-        publicId: uploadResult.public_id
+        message: "Image uploaded successfully to Cloudinary",
+        imageUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
+        imagePublicId: uploadResult.public_id, // Optional: for future image management
+        width: uploadResult.width,
+        height: uploadResult.height,
+        format: uploadResult.format,
+        bytes: uploadResult.bytes
       });
-    } else {
-      // Fallback: Save to local storage if Cloudinary not configured
-      const uploadDir = path.join(__dirname, '../uploads/question-images');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      
-      const filename = Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
-      const filepath = path.join(uploadDir, filename);
-      
-      fs.writeFileSync(filepath, file.buffer);
-      
-      const imageUrl = `${req.protocol}://${req.get('host')}/uploads/question-images/${filename}`;
-      
-      res.status(200).json({
-        success: true,
-        message: "Image uploaded successfully",
-        imageUrl: imageUrl
+    } catch (cloudinaryError) {
+      console.error("❌ Cloudinary upload error:", cloudinaryError);
+      return res.status(500).json({
+        error: "Failed to upload image to Cloudinary",
+        details: cloudinaryError.message
       });
     }
     
