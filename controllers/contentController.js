@@ -10,6 +10,9 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const cloudinary = require("cloudinary").v2;
+const Anthropic = require("@anthropic-ai/sdk");
+const pdfParse = require("pdf-parse");
+const { fromBuffer } = require("pdf2pic");
 
 // const addCourse = async (req, res) => {
 //   try {
@@ -1249,6 +1252,16 @@ const uploadImage = multer({
   }
 });
 
+// Multer storage for PDF parsing (memory storage - files kept in RAM for processing)
+const pdfMemoryStorage = multer.memoryStorage();
+const pdfUpload = multer({
+  storage: pdfMemoryStorage, // Memory storage - files are kept in RAM, not saved to disk
+  fileFilter: fileFilter, // Use the same PDF file filter
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit for PDFs
+  }
+});
+
 // Configure Cloudinary
 const configureCloudinary = () => {
   if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
@@ -1554,7 +1567,549 @@ const getRecentActivities = async (req, res) => {
     });
   }
 };
-  
+
+// Initialize Anthropic (Claude) client
+let anthropic = null;
+const DEFAULT_CLAUDE_MODEL = process.env.CLAUDE_MODEL_NAME || "claude-3-sonnet-20240229";
+
+if (process.env.ANTHROPIC_API_KEY) {
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+  console.log('✅ Anthropic (Claude) API initialized');
+  console.log(`   Default model: ${DEFAULT_CLAUDE_MODEL}`);
+} else {
+  console.warn('⚠️ ANTHROPIC_API_KEY not found. PDF parsing with Claude will not work.');
+}
+
+// Parse PDF and generate quiz questions using Claude API
+const parsePdf = async (req, res) => {
+  try {
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ error: "PDF file is required" });
+    }
+
+    if (!anthropic) {
+      return res.status(500).json({ 
+        error: "Claude API is not configured. Please set ANTHROPIC_API_KEY in environment variables." 
+      });
+    }
+
+    console.log('📄 Starting PDF parsing...');
+    console.log('   File:', file.originalname);
+    console.log('   Size:', file.size, 'bytes');
+
+    // Extract text from PDF
+    let pdfText = '';
+    try {
+      // Check if buffer exists (should exist with memoryStorage)
+      if (!file || !file.buffer) {
+        throw new Error('PDF file buffer is missing. Make sure the file was uploaded correctly.');
+      }
+      
+      if (file.buffer.length === 0) {
+        throw new Error('PDF file buffer is empty');
+      }
+      
+      console.log('📄 Parsing PDF buffer...');
+      console.log('   Buffer type:', file.buffer.constructor.name);
+      console.log('   Buffer length:', file.buffer.length, 'bytes');
+      console.log('   File mimetype:', file.mimetype);
+      
+      // pdf-parse v1.1.1 accepts Buffer directly, but let's ensure it's valid
+      // If it's already a Buffer, use it directly; otherwise convert
+      let pdfBuffer = file.buffer;
+      
+      // Ensure it's a Buffer (multer memoryStorage provides Buffer)
+      if (!Buffer.isBuffer(pdfBuffer)) {
+        // If not a Buffer, try to convert
+        if (pdfBuffer instanceof Uint8Array) {
+          pdfBuffer = Buffer.from(pdfBuffer);
+        } else {
+          pdfBuffer = Buffer.from(pdfBuffer);
+        }
+      }
+      
+      // pdf-parse should accept Buffer directly
+      // Try with different options to extract text more aggressively
+      let pdfData;
+      try {
+        // First try with default options
+        pdfData = await pdfParse(pdfBuffer);
+      } catch (firstError) {
+        console.warn('⚠️ First parse attempt failed, trying with options:', firstError.message);
+        // Try with explicit options
+        pdfData = await pdfParse(pdfBuffer, {
+          max: 0, // Parse all pages
+        });
+      }
+      
+      pdfText = pdfData.text || '';
+      
+      console.log('✅ PDF parsed successfully');
+      console.log('   Pages:', pdfData.numpages);
+      console.log('   Text length:', pdfText.length, 'characters');
+      console.log('   Text preview (first 500 chars):', pdfText.substring(0, 500));
+      console.log('   Has text:', pdfText.trim().length > 0);
+      
+      // Check if text extraction was successful
+      if (!pdfText || pdfText.trim().length === 0) {
+        console.warn('⚠️ PDF text extraction returned empty text');
+        console.warn('   This might be an image-based PDF (scanned document)');
+        console.warn('   PDF info:', {
+          numpages: pdfData.numpages,
+          info: pdfData.info,
+          metadata: pdfData.metadata
+        });
+        
+        // For image-based PDFs, convert pages to images and use Claude Vision API
+        console.log('📸 PDF appears to be image-based (scanned document)');
+        console.log('   Converting PDF pages to images and using Claude Vision API for OCR...');
+        
+        try {
+          // Create temporary directory for images
+          const tempDir = path.join(__dirname, '../temp/pdf-images');
+          if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+          }
+          
+          // Save PDF buffer to temp file (for pdf2pic)
+          const tempPdfPath = path.join(tempDir, `temp_${Date.now()}.pdf`);
+          fs.writeFileSync(tempPdfPath, pdfBuffer);
+          
+          // Convert PDF to images using pdf2pic
+          const convert = fromBuffer(pdfBuffer, {
+            density: 300,           // Higher DPI for better OCR accuracy
+            saveFilename: "page",
+            savePath: tempDir,
+            format: "png",
+            width: 2000,            // High resolution for better text recognition
+            height: 2000
+          });
+          
+          const totalPages = pdfData.numpages || 1;
+          const extractedTexts = [];
+          
+          console.log(`   Processing ${totalPages} page(s)...`);
+          
+          // Process each page (limit to first 10 pages to avoid timeout)
+          const maxPages = Math.min(totalPages, 10);
+          for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+            try {
+              console.log(`   Processing page ${pageNum}/${maxPages}...`);
+              
+              // Convert page to image
+              let imageBase64 = null;
+              
+              try {
+                const imageResult = await convert(pageNum, { responseType: "base64" });
+                if (imageResult && imageResult.base64) {
+                  imageBase64 = imageResult.base64;
+                }
+              } catch (convertError) {
+                console.warn(`   ⚠️ Base64 conversion failed, trying file read:`, convertError.message);
+              }
+              
+              // Fallback: read from saved file
+              if (!imageBase64) {
+                const imagePath = path.join(tempDir, `page.${pageNum}.png`);
+                if (fs.existsSync(imagePath)) {
+                  const imageBuffer = fs.readFileSync(imagePath);
+                  imageBase64 = imageBuffer.toString('base64');
+                } else {
+                  console.warn(`   ⚠️ Failed to convert page ${pageNum} to image`);
+                  continue;
+                }
+              }
+              
+              if (!imageBase64) {
+                console.warn(`   ⚠️ No image data for page ${pageNum}`);
+                continue;
+              }
+              
+              // Use Claude Vision API to extract text from the image
+              // Try different models in order of preference
+              // Start with the configured model, then fallback to others
+              const visionModels = [
+                DEFAULT_CLAUDE_MODEL,        // User-configured or default
+                "claude-3-sonnet-20240229",  // Standard Sonnet 3
+                "claude-3-opus-20240229",    // Most capable
+                "claude-3-haiku-20240307"   // Fastest
+              ];
+              
+              let visionMessage = null;
+              let visionError = null;
+              
+              for (const visionModel of visionModels) {
+                try {
+                  console.log(`   Trying vision model: ${visionModel}`);
+                  visionMessage = await anthropic.messages.create({
+                    model: visionModel,
+                    max_tokens: 4096,
+                    messages: [{
+                      role: "user",
+                      content: [
+                        {
+                          type: "text",
+                          text: `Extract ALL text from this image. This is page ${pageNum} of a NEET question paper containing questions in both Hindi and English languages.
+
+Extract:
+1. All question text (preserve both Hindi and English text exactly as shown)
+2. All options for each question (A, B, C, D, etc.)
+3. Any formulas or mathematical expressions
+4. All visible text content
+
+Return the extracted text exactly as it appears in the image. Preserve the structure and formatting.`
+                        },
+                        {
+                          type: "image",
+                          source: {
+                            type: "base64",
+                            media_type: "image/png",
+                            data: imageBase64
+                          }
+                        }
+                      ]
+                    }]
+                  });
+                  console.log(`   ✅ Vision model ${visionModel} succeeded`);
+                  break; // Success, exit loop
+                } catch (err) {
+                  visionError = err;
+                  console.warn(`   ⚠️ Vision model ${visionModel} failed:`, err.message);
+                  // Continue to next model
+                }
+              }
+              
+              if (!visionMessage) {
+                throw new Error(`All vision models failed. Last error: ${visionError?.message || 'Unknown error'}`);
+              }
+              
+              const pageText = visionMessage.content[0].text;
+              
+              // Check if we got valid text
+              if (!pageText || pageText.trim().length === 0) {
+                console.warn(`   ⚠️ Page ${pageNum}: Claude Vision returned empty text`);
+                // Still add it to the array so we know the page was processed
+                extractedTexts.push(`\n\n--- Page ${pageNum} ---\n\n[No text extracted from this page]`);
+              } else {
+                extractedTexts.push(`\n\n--- Page ${pageNum} ---\n\n${pageText}`);
+                console.log(`   ✅ Page ${pageNum} processed: ${pageText.length} characters extracted`);
+              }
+              
+              // Clean up the image file if it exists
+              const imagePath = path.join(tempDir, `page.${pageNum}.png`);
+              if (fs.existsSync(imagePath)) {
+                try {
+                  fs.unlinkSync(imagePath);
+                } catch (unlinkError) {
+                  // Ignore cleanup errors
+                }
+              }
+              
+            } catch (pageError) {
+              console.error(`   ❌ Error processing page ${pageNum}:`, pageError.message);
+              console.error(`   Error details:`, pageError.stack);
+              // Continue with next page - don't fail completely if one page fails
+              // Add a placeholder so we know this page failed
+              extractedTexts.push(`\n\n--- Page ${pageNum} (FAILED) ---\n\n[Error: ${pageError.message}]`);
+            }
+          }
+          
+          // Combine all extracted text
+          pdfText = extractedTexts.join('\n');
+          
+          // Clean up temp directory and files
+          try {
+            // Remove temp PDF file
+            if (fs.existsSync(tempPdfPath)) {
+              fs.unlinkSync(tempPdfPath);
+            }
+            
+            // Remove image files
+            const files = fs.readdirSync(tempDir);
+            files.forEach(file => {
+              const filePath = path.join(tempDir, file);
+              if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+              }
+            });
+          } catch (cleanupError) {
+            console.warn('   ⚠️ Error cleaning up temp files:', cleanupError.message);
+          }
+          
+          // Check if we successfully extracted any text
+          if (extractedTexts.length === 0) {
+            throw new Error('No pages were successfully processed. All pages failed during OCR extraction. Check the logs above for specific errors.');
+          }
+          
+          // Filter out placeholder text to check if we have real content
+          const realText = pdfText.replace(/\[No text extracted from this page\]/g, '').replace(/\[Error:.*?\]/g, '').trim();
+          
+          if (realText.length === 0) {
+            console.error('   ⚠️ Extracted text is empty after processing');
+            console.error(`   Processed ${extractedTexts.length} page(s), but no real text was extracted`);
+            console.error(`   Raw text length: ${pdfText.length} characters`);
+            console.error(`   Sample of extracted text:`, pdfText.substring(0, 200));
+            throw new Error(`Failed to extract text from PDF pages. Processed ${extractedTexts.length} page(s) but Claude Vision API returned empty or invalid responses. This might indicate: 1) The images are not readable, 2) Claude Vision API is not working correctly, or 3) The PDF pages are blank. Check the console logs above for detailed error messages.`);
+          }
+          
+          console.log('✅ Successfully extracted text from image-based PDF using Claude Vision API');
+          console.log(`   Total extracted text: ${pdfText.length} characters`);
+          console.log(`   Real text content: ${realText.length} characters`);
+          console.log(`   Processed ${extractedTexts.length} page(s) out of ${maxPages} attempted`);
+          
+        } catch (ocrError) {
+          console.error('❌ Error processing image-based PDF:', ocrError);
+          return res.status(400).json({ 
+            error: "Failed to extract text from image-based PDF",
+            details: ocrError.message,
+            hint: "The PDF appears to be image-based (scanned). OCR processing failed.",
+            totalPages: pdfData.numpages
+          });
+        }
+      }
+    } catch (pdfError) {
+      console.error('❌ Error parsing PDF:', pdfError);
+      console.error('   Error details:', pdfError.message);
+      console.error('   File object:', file ? { 
+        fieldname: file.fieldname,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        bufferType: file.buffer ? file.buffer.constructor.name : 'null',
+        bufferLength: file.buffer ? file.buffer.length : 0
+      } : 'null');
+      return res.status(400).json({ 
+        error: "Failed to extract text from PDF", 
+        details: pdfError.message,
+        hint: "If this is a scanned PDF, it may need OCR (Optical Character Recognition) to extract text."
+      });
+    }
+
+    // Additional check after extraction
+    if (!pdfText || pdfText.trim().length === 0) {
+      console.warn('⚠️ PDF text is empty after extraction');
+      return res.status(400).json({ 
+        error: "PDF appears to be empty or contains no extractable text",
+        hint: "This PDF might be image-based (scanned). Please ensure the PDF contains selectable text, or use OCR to convert scanned images to text."
+      });
+    }
+
+    // Limit PDF text to avoid token limits (Claude has context window limits)
+    // For claude-3-5-sonnet, max context is 200k tokens, so we limit to ~150k chars to be safe
+    const maxTextLength = 150000;
+    const truncatedText = pdfText.length > maxTextLength 
+      ? pdfText.substring(0, maxTextLength) + '\n\n[Content truncated due to length...]'
+      : pdfText;
+
+    // Prepare prompt for Claude to generate quiz questions
+    const prompt = `You are an expert quiz generator and educational content analyzer. Analyze the following PDF content and extract/create quiz questions.
+
+CRITICAL INSTRUCTIONS:
+1. Extract ALL questions from the PDF content - look for question numbers, question marks, and question patterns
+2. For each question, you MUST identify:
+   - The complete question text (preserve any LaTeX formulas using $formula$ for inline math and $$formula$$ for block/display math)
+   - ALL options (typically A, B, C, D, but could be more)
+   - The correct answer (must EXACTLY match one of the options - check carefully)
+   - Any diagrams/images mentioned (describe in imageUrl field)
+3. Preserve ALL mathematical and chemical formulas in LaTeX format:
+   - Inline: $H_2O$, $x^2$, $\\frac{a}{b}$
+   - Block: $$\\int_0^1 x dx$$, $$\\sum_{i=1}^{n} i$$
+4. If questions reference diagrams, figures, or images, note them in the imageUrl field
+5. Return ONLY valid JSON - no markdown, no explanations, just the JSON array
+
+OUTPUT FORMAT - Return ONLY this JSON structure (no other text):
+[
+  {
+    "questionText": "Question text here. Use $formula$ for inline math and $$formula$$ for block math",
+    "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
+    "answer": "Option A text",
+    "imageUrl": "",
+    "marks": 1
+  }
+]
+
+PDF Content:
+${truncatedText}
+
+Now extract and generate all quiz questions from the above content. Return ONLY the JSON array.`;
+
+    console.log('🤖 Sending request to Claude API...');
+    
+    // Try different model names in order of preference
+    // Start with the configured model, then fallback to others
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,         // User-configured or default
+      "claude-3-sonnet-20240229",   // Standard Sonnet 3
+      "claude-3-opus-20240229",     // Most capable (fallback)
+      "claude-3-haiku-20240307"     // Fastest (last resort)
+    ];
+    
+    let message = null;
+    let lastError = null;
+    
+    // Try each model until one works
+    for (const modelName of modelNames) {
+      try {
+        console.log(`   Trying model: ${modelName}`);
+        message = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 8192, // Increased to handle more questions
+          temperature: 0.3, // Lower temperature for more consistent, accurate extraction
+          messages: [{
+            role: "user",
+            content: prompt
+          }]
+        });
+        console.log(`   ✅ Successfully used model: ${modelName}`);
+        break; // Success, exit loop
+      } catch (modelError) {
+        lastError = modelError;
+        console.warn(`   ⚠️ Model ${modelName} failed:`, modelError.message);
+        // Continue to next model
+      }
+    }
+    
+    if (!message) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    }
+
+    const claudeResponse = message.content[0].text;
+    console.log('✅ Received response from Claude');
+    console.log('   Response length:', claudeResponse.length, 'characters');
+
+    // Parse Claude's JSON response
+    let questions = [];
+    try {
+      // Extract JSON from response (Claude might add markdown formatting or explanations)
+      let jsonText = claudeResponse.trim();
+      
+      // Remove markdown code blocks if present
+      if (jsonText.includes('```json')) {
+        const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          jsonText = jsonMatch[1].trim();
+        }
+      } else if (jsonText.includes('```')) {
+        const codeMatch = jsonText.match(/```\s*([\s\S]*?)\s*```/);
+        if (codeMatch) {
+          jsonText = codeMatch[1].trim();
+        }
+      }
+      
+      // Try to find JSON array in the response (in case there's extra text)
+      const jsonArrayMatch = jsonText.match(/\[[\s\S]*\]/);
+      if (jsonArrayMatch) {
+        jsonText = jsonArrayMatch[0];
+      }
+      
+      // Parse the JSON
+      questions = JSON.parse(jsonText);
+      
+      if (!Array.isArray(questions)) {
+        throw new Error('Response is not an array');
+      }
+      
+      if (questions.length === 0) {
+        console.warn('⚠️ Claude returned empty array - no questions found');
+      }
+      
+      console.log('✅ Parsed', questions.length, 'questions from Claude response');
+    } catch (parseError) {
+      console.error('❌ Error parsing Claude response:', parseError);
+      console.error('   Response preview:', claudeResponse.substring(0, 1000));
+      console.error('   Full response length:', claudeResponse.length);
+      
+      // Try to provide helpful error message
+      let errorDetails = parseError.message;
+      if (claudeResponse.includes('I cannot') || claudeResponse.includes('I\'m unable')) {
+        errorDetails = 'Claude was unable to extract questions. The PDF might not contain questions or the format is unclear.';
+      }
+      
+      return res.status(500).json({ 
+        error: "Failed to parse quiz questions from Claude response",
+        details: errorDetails,
+        hint: "Make sure the PDF contains clear questions with options and answers",
+        rawResponsePreview: claudeResponse.substring(0, 2000) // Include first 2000 chars for debugging
+      });
+    }
+
+    // Validate and clean questions
+    const validatedQuestions = questions
+      .map((q, index) => {
+        // Ensure required fields
+        if (!q.questionText || typeof q.questionText !== 'string') {
+          console.warn(`⚠️ Question ${index + 1}: Missing or invalid questionText`);
+          return null;
+        }
+        
+        if (!Array.isArray(q.options) || q.options.length < 2) {
+          console.warn(`⚠️ Question ${index + 1}: Invalid options`);
+          return null;
+        }
+        
+        if (!q.answer || typeof q.answer !== 'string') {
+          console.warn(`⚠️ Question ${index + 1}: Missing answer`);
+          return null;
+        }
+        
+        // Ensure answer matches one of the options
+        const answerMatches = q.options.some(opt => 
+          opt.trim() === q.answer.trim() || 
+          opt.toString().trim() === q.answer.toString().trim()
+        );
+        
+        if (!answerMatches) {
+          console.warn(`⚠️ Question ${index + 1}: Answer doesn't match any option`);
+          // Try to fix by finding closest match
+          const matchingOption = q.options.find(opt => 
+            opt.toString().toLowerCase().includes(q.answer.toString().toLowerCase()) ||
+            q.answer.toString().toLowerCase().includes(opt.toString().toLowerCase())
+          );
+          if (matchingOption) {
+            q.answer = matchingOption;
+          } else {
+            return null;
+          }
+        }
+        
+        return {
+          questionText: q.questionText.trim(),
+          options: q.options.map(opt => opt.toString().trim()).filter(opt => opt !== ''),
+          answer: q.answer.trim(),
+          imageUrl: (q.imageUrl && q.imageUrl.trim()) ? q.imageUrl.trim() : '',
+          marks: q.marks || 1
+        };
+      })
+      .filter(q => q !== null);
+
+    console.log('✅ Validated', validatedQuestions.length, 'questions');
+
+    // Return parsed questions
+    res.status(200).json({
+      success: true,
+      data: {
+        totalQuestions: validatedQuestions.length,
+        questions: validatedQuestions,
+        totalPages: pdfText.split('\f').length || 1,
+        validation: {
+          warnings: validatedQuestions.length < questions.length 
+            ? [`${questions.length - validatedQuestions.length} questions were filtered due to validation errors`]
+            : []
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error parsing PDF:', error);
+    res.status(500).json({ 
+      error: error.message || "Failed to parse PDF and generate quiz questions",
+      details: error.stack
+    });
+  }
+};
 
 
   module.exports = {
@@ -1584,7 +2139,9 @@ const getRecentActivities = async (req, res) => {
     getLibraryDocuments,
     getDashboardStats,
     getRecentActivities,
-    upload, // Export multer upload middleware
+    upload, // Export multer upload middleware (disk storage)
     uploadImage, // Export image upload middleware
-    uploadQuestionImage
+    pdfUpload, // Export PDF upload middleware (memory storage)
+    uploadQuestionImage,
+    parsePdf
   }
