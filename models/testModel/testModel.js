@@ -15,6 +15,14 @@ const TestSchema = new mongoose.Schema(
       type: String,
       default: 'https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691763/jee_kai0bt.png' // Replace with your default image URL
     },
+    imagePublicId: {
+      type: String,
+      default: null // Cloudinary public ID for image management
+    },
+    category: {
+      type: String,
+      trim: true
+    },
     level: { 
       type: String, 
       enum: ["Beginner", "Intermediate", "Advanced", "Intermediate to Advanced"],
@@ -29,7 +37,6 @@ const TestSchema = new mongoose.Schema(
       trim: true
     }],
     certificate: { type: Boolean, default: true },
-    instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     quizzes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Quiz" }],
     enrolledStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: "user" }],
     ratings: [

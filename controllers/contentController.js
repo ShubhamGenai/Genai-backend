@@ -874,12 +874,14 @@ const addTest = async (req, res) => {
       numberOfQuestions,
       price: { actual, discounted },
       level,
+      category,
       features,
       skills,
       certificate,
-      instructor,
       quizzes,
       passingScore,
+      image, // Test image URL from Cloudinary
+      imagePublicId, // Test image public ID from Cloudinary
       ratings = [] // optional: handle if ratings are not provided
     } = req.body;
 
@@ -919,11 +921,13 @@ const addTest = async (req, res) => {
         actual,
         discounted
       },
+      image: image || undefined, // Use provided image URL or default from schema
+      imagePublicId: imagePublicId || undefined, // Store Cloudinary public ID if provided
+      category: category || undefined,
       level,
       features: features || [],
       skills: skills || [],
       certificate: certificate !== undefined ? certificate : true,
-      instructor,
       quizzes: quizIds,
       passingScore,
       totalMarks,
@@ -972,7 +976,6 @@ const getTestById = async (req, res) => {
         path: 'quizzes',
         model: 'Quiz'
       })
-      .populate('instructor', 'name email')
       .exec();
 
     if (!test) {
@@ -991,6 +994,40 @@ const getTestById = async (req, res) => {
   } catch (error) {
     console.error("Error fetching test by ID:", error);
     res.status(500).json({ error: error.message || "Failed to fetch test" });
+  }
+};
+
+// Delete test by ID
+const deleteTest = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid test ID" });
+    }
+
+    const test = await Test.findById(id);
+    if (!test) {
+      return res.status(404).json({ error: "Test not found" });
+    }
+
+    // Delete associated quizzes
+    if (test.quizzes && test.quizzes.length > 0) {
+      for (const quizId of test.quizzes) {
+        await Quiz.findByIdAndDelete(quizId);
+      }
+    }
+
+    // Delete the test
+    await Test.findByIdAndDelete(id);
+
+    res.status(200).json({ 
+      message: "Test deleted successfully",
+      deletedTestId: id 
+    });
+  } catch (error) {
+    console.error("Error deleting test:", error);
+    res.status(500).json({ error: error.message || "Failed to delete test" });
   }
 };
 
@@ -1425,6 +1462,86 @@ const uploadQuestionImage = async (req, res) => {
     console.error("Error uploading image:", error);
     res.status(400).json({
       error: error.message || "Failed to upload image"
+    });
+  }
+};
+
+// Upload test image/diagram
+// IMPORTANT: Images are uploaded directly to Cloudinary - NO local storage
+// The Cloudinary URL is returned and stored in the database
+const uploadTestImage = async (req, res) => {
+  try {
+    console.log('Upload test image endpoint hit');
+    const file = req.file;
+    const { testId } = req.body;
+    
+    if (!file) {
+      return res.status(400).json({ error: "Image file is required" });
+    }
+
+    // Check if Cloudinary is configured (REQUIRED - no fallback to local storage)
+    const cloudinaryConfigured = 
+      process.env.CLOUDINARY_CLOUD_NAME && 
+      process.env.CLOUDINARY_API_KEY && 
+      process.env.CLOUDINARY_API_SECRET;
+
+    if (!cloudinaryConfigured) {
+      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+      return res.status(500).json({ 
+        error: "Cloudinary is not configured. Please set the required environment variables.",
+        details: "Images are uploaded directly to Cloudinary. No local storage is used."
+      });
+    }
+
+    // Upload directly to Cloudinary (NO local file saving)
+    try {
+      // Convert buffer to base64 data URI for Cloudinary upload
+      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      
+      // Upload to Cloudinary with optimized settings
+      // Organized folder structure: tests/images
+      const uploadResult = await cloudinary.uploader.upload(base64Image, {
+        folder: CLOUDINARY_FOLDERS.TEST_IMAGES, // Organized folder: tests/images
+        resource_type: 'image',
+        transformation: [
+          { quality: 'auto' }, // Automatic quality optimization
+          { fetch_format: 'auto' } // Automatic format selection (WebP when supported)
+        ],
+        overwrite: false, // Don't overwrite existing images
+        invalidate: true, // Invalidate CDN cache
+        use_filename: true, // Use original filename
+        unique_filename: true // Add unique suffix to prevent conflicts
+      });
+      
+      console.log('✅ Test image uploaded to Cloudinary successfully');
+      console.log('   URL:', uploadResult.secure_url);
+      console.log('   Public ID:', uploadResult.public_id);
+      console.log('   Size:', uploadResult.bytes, 'bytes');
+      
+      // Return Cloudinary URL and metadata - these will be stored in the database
+      // The imageUrl (Cloudinary secure URL) is what gets stored in the Test schema
+      res.status(200).json({
+        success: true,
+        message: "Test image uploaded successfully to Cloudinary",
+        imageUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
+        imagePublicId: uploadResult.public_id, // Optional: for future image management
+        width: uploadResult.width,
+        height: uploadResult.height,
+        format: uploadResult.format,
+        bytes: uploadResult.bytes
+      });
+    } catch (cloudinaryError) {
+      console.error("❌ Cloudinary upload error:", cloudinaryError);
+      return res.status(500).json({
+        error: "Failed to upload image to Cloudinary",
+        details: cloudinaryError.message
+      });
+    }
+    
+  } catch (error) {
+    console.error("Error uploading test image:", error);
+    res.status(400).json({
+      error: error.message || "Failed to upload test image"
     });
   }
 };
@@ -2131,6 +2248,7 @@ Now extract and generate all quiz questions from the above content. Return ONLY 
     getModuleById,
     getTests,
     getTestById,
+    deleteTest,
     getCourses,
     getCourseById,
     updateCourse,
@@ -2143,5 +2261,6 @@ Now extract and generate all quiz questions from the above content. Return ONLY 
     uploadImage, // Export image upload middleware
     pdfUpload, // Export PDF upload middleware (memory storage)
     uploadQuestionImage,
+    uploadTestImage,
     parsePdf
   }

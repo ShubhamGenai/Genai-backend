@@ -12,6 +12,7 @@ router.post("/add-module", contentController.addModule)
 router.put("/update-module/:id", contentController.updateModule);
 router.delete("/delete-module/:id", contentController.deleteModule);
 router.post("/add-test", contentController.addTest)
+router.delete("/delete-test/:id", contentController.deleteTest)
 router.post("/add-quiz", contentController.addQuiz)
 router.put("/update-quiz/:id", contentController.updateQuiz)
 router.delete("/delete-quiz/:id", contentController.deleteQuiz)
@@ -29,6 +30,7 @@ router.get("/get-library-documents", contentController.getLibraryDocuments)
 router.get("/dashboard-stats", contentController.getDashboardStats)
 router.get("/recent-activities", contentController.getRecentActivities)
 router.post("/upload-question-image", contentController.uploadImage.single('imageFile'), contentController.uploadQuestionImage)
+router.post("/upload-test-image", contentController.uploadImage.single('imageFile'), contentController.uploadTestImage)
 router.post("/parse-pdf", contentController.pdfUpload.single('pdfFile'), contentController.parsePdf)
 
 
