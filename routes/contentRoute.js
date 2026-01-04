@@ -32,6 +32,7 @@ router.get("/recent-activities", contentController.getRecentActivities)
 router.post("/upload-question-image", contentController.uploadImage.single('imageFile'), contentController.uploadQuestionImage)
 router.post("/upload-test-image", contentController.uploadImage.single('imageFile'), contentController.uploadTestImage)
 router.post("/parse-pdf", contentController.pdfUpload.single('pdfFile'), contentController.parsePdf)
+router.post("/generate-quiz-questions", contentController.generateQuizQuestions)
 
 
 module.exports =  router;

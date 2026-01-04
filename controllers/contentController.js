@@ -88,6 +88,246 @@ const { fromBuffer } = require("pdf2pic");
 //   }
 // };
 
+// Helper function to robustly parse JSON from Claude responses
+const parseClaudeJSON = (claudeResponse) => {
+  let jsonText = claudeResponse.trim();
+  
+  // Remove markdown code blocks if present
+  if (jsonText.includes('```json')) {
+    const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[1].trim();
+    }
+  } else if (jsonText.includes('```')) {
+    const codeMatch = jsonText.match(/```\s*([\s\S]*?)\s*```/);
+    if (codeMatch) {
+      jsonText = codeMatch[1].trim();
+    }
+  }
+  
+  // Try to find JSON array in the response (in case there's extra text)
+  const jsonArrayMatch = jsonText.match(/\[[\s\S]*\]/);
+  if (jsonArrayMatch) {
+    jsonText = jsonArrayMatch[0];
+  }
+  
+  // Try to fix common JSON errors
+  try {
+    // First, try direct parsing
+    return JSON.parse(jsonText);
+  } catch (firstError) {
+    console.log('⚠️ First JSON parse attempt failed, trying to fix common errors...');
+    
+    // Try to fix common JSON issues
+    let fixedJson = jsonText;
+    
+    // Remove trailing commas before closing brackets/braces
+    fixedJson = fixedJson.replace(/,(\s*[}\]])/g, '$1');
+    
+    // Fix incomplete fields (e.g., "answer": without value)
+    // Pattern: field name followed by colon but no value before comma or closing brace
+    fixedJson = fixedJson.replace(/("(?:questionText|options|answer|imageUrl|marks)"\s*:\s*)(?=\s*[,}])/g, (match, field) => {
+      // If it's answer field, try to infer from context or use empty string
+      if (field.includes('answer')) {
+        return field + '""';
+      }
+      // For other fields, provide appropriate defaults
+      if (field.includes('options')) {
+        return field + '[]';
+      }
+      if (field.includes('marks')) {
+        return field + '1';
+      }
+      return field + '""';
+    });
+    
+    // Try parsing again
+    try {
+      return JSON.parse(fixedJson);
+    } catch (secondError) {
+      console.log('⚠️ Second JSON parse attempt failed, trying to extract valid question objects...');
+      
+      // Try to extract complete question objects using a more sophisticated approach
+      try {
+        const questions = [];
+        let depth = 0;
+        let inString = false;
+        let escapeNext = false;
+        let currentObj = '';
+        let braceCount = 0;
+        
+        // Find all complete question objects by tracking braces
+        for (let i = 0; i < fixedJson.length; i++) {
+          const char = fixedJson[i];
+          
+          if (escapeNext) {
+            escapeNext = false;
+            currentObj += char;
+            continue;
+          }
+          
+          if (char === '\\') {
+            escapeNext = true;
+            currentObj += char;
+            continue;
+          }
+          
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            currentObj += char;
+            continue;
+          }
+          
+          if (!inString) {
+            if (char === '{') {
+              if (braceCount === 0) {
+                currentObj = '{';
+              } else {
+                currentObj += char;
+              }
+              braceCount++;
+            } else if (char === '}') {
+              currentObj += char;
+              braceCount--;
+              
+              if (braceCount === 0) {
+                // We have a complete object, try to parse it
+                try {
+                  const question = JSON.parse(currentObj);
+                  // Validate it has required fields
+                  if (question.questionText && Array.isArray(question.options) && question.options.length > 0) {
+                    // Ensure answer exists, if not use first option
+                    if (!question.answer || question.answer.trim() === '') {
+                      question.answer = question.options[0];
+                    }
+                    // Ensure other fields exist
+                    question.imageUrl = question.imageUrl || '';
+                    question.marks = question.marks || 1;
+                    questions.push(question);
+                  }
+                } catch (e) {
+                  // Skip invalid objects
+                }
+                currentObj = '';
+              }
+            } else {
+              if (braceCount > 0) {
+                currentObj += char;
+              }
+            }
+          } else {
+            currentObj += char;
+          }
+        }
+        
+        if (questions.length > 0) {
+          console.log(`✅ Extracted ${questions.length} valid questions from malformed JSON`);
+          return questions;
+        }
+      } catch (extractError) {
+        console.log('⚠️ Object extraction failed:', extractError.message);
+      }
+      
+      // Try to truncate at error position and parse partial JSON
+      try {
+        const errorPosMatch = firstError.message.match(/position (\d+)/);
+        if (errorPosMatch) {
+          const errorPos = parseInt(errorPosMatch[1]);
+          // Try to find the last complete question object before the error
+          // Look backwards from error position to find a complete object
+          let truncatePos = errorPos;
+          let braceCount = 0;
+          let foundStart = false;
+          
+          // Find the start of the last complete object
+          for (let i = errorPos - 1; i >= 0; i--) {
+            if (fixedJson[i] === '}') {
+              braceCount++;
+            } else if (fixedJson[i] === '{') {
+              braceCount--;
+              if (braceCount === 0) {
+                truncatePos = i;
+                foundStart = true;
+                break;
+              }
+            }
+          }
+          
+          if (foundStart) {
+            // Find the matching closing brace
+            braceCount = 1;
+            for (let i = truncatePos + 1; i < errorPos; i++) {
+              if (fixedJson[i] === '{') braceCount++;
+              if (fixedJson[i] === '}') braceCount--;
+              if (braceCount === 0) {
+                truncatePos = i + 1;
+                break;
+              }
+            }
+            
+            // Truncate and try to parse
+            const truncatedJson = fixedJson.substring(0, truncatePos) + ']';
+            try {
+              const partialQuestions = JSON.parse(truncatedJson);
+              if (Array.isArray(partialQuestions) && partialQuestions.length > 0) {
+                console.log(`✅ Parsed ${partialQuestions.length} questions by truncating at error position`);
+                return partialQuestions;
+              }
+            } catch (e) {
+              // Continue to next fallback
+            }
+          }
+        }
+      } catch (truncateError) {
+        // Continue to regex fallback
+      }
+      
+      // Last resort: try to find and parse individual complete objects using regex
+      try {
+        // Match complete objects that have questionText and options
+        const objectPattern = /\{\s*"questionText"\s*:\s*"[^"]*"\s*,\s*"options"\s*:\s*\[[^\]]*\]\s*,\s*"answer"\s*:\s*"[^"]*"[^}]*\}/g;
+        const matches = fixedJson.match(objectPattern);
+        if (matches && matches.length > 0) {
+          const questions = [];
+          for (const match of matches) {
+            try {
+              // Clean up the match - remove incomplete trailing fields
+              let cleanMatch = match.replace(/,\s*"[^"]*"\s*:\s*(?=,|\})/g, '');
+              cleanMatch = cleanMatch.replace(/,(\s*\})/g, '$1');
+              
+              const question = JSON.parse(cleanMatch);
+              if (question.questionText && Array.isArray(question.options) && question.options.length > 0) {
+                if (!question.answer || question.answer.trim() === '') {
+                  question.answer = question.options[0];
+                }
+                question.imageUrl = question.imageUrl || '';
+                question.marks = question.marks || 1;
+                questions.push(question);
+              }
+            } catch (e) {
+              // Skip invalid objects
+            }
+          }
+          if (questions.length > 0) {
+            console.log(`✅ Extracted ${questions.length} valid questions using regex fallback`);
+            return questions;
+          }
+        }
+      } catch (regexError) {
+        // Continue to final error
+      }
+      
+      // If all else fails, throw the original error with context
+      const errorPos = firstError.message.match(/position (\d+)/)?.[1] || 'unknown';
+      const contextStart = Math.max(0, parseInt(errorPos) - 100);
+      const contextEnd = Math.min(fixedJson.length, parseInt(errorPos) + 100);
+      const errorContext = fixedJson.substring(contextStart, contextEnd);
+      
+      throw new Error(`JSON parsing failed: ${firstError.message}. Position: ${errorPos}. Context: ...${errorContext}...`);
+    }
+  }
+};
+
 const addCourse = async (req, res) => {
   console.log(req.body,"add course body");
   
@@ -2100,30 +2340,7 @@ Now extract and generate all quiz questions from the above content. Return ONLY 
     // Parse Claude's JSON response
     let questions = [];
     try {
-      // Extract JSON from response (Claude might add markdown formatting or explanations)
-      let jsonText = claudeResponse.trim();
-      
-      // Remove markdown code blocks if present
-      if (jsonText.includes('```json')) {
-        const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch) {
-          jsonText = jsonMatch[1].trim();
-        }
-      } else if (jsonText.includes('```')) {
-        const codeMatch = jsonText.match(/```\s*([\s\S]*?)\s*```/);
-        if (codeMatch) {
-          jsonText = codeMatch[1].trim();
-        }
-      }
-      
-      // Try to find JSON array in the response (in case there's extra text)
-      const jsonArrayMatch = jsonText.match(/\[[\s\S]*\]/);
-      if (jsonArrayMatch) {
-        jsonText = jsonArrayMatch[0];
-      }
-      
-      // Parse the JSON
-      questions = JSON.parse(jsonText);
+      questions = parseClaudeJSON(claudeResponse);
       
       if (!Array.isArray(questions)) {
         throw new Error('Response is not an array');
@@ -2228,6 +2445,214 @@ Now extract and generate all quiz questions from the above content. Return ONLY 
   }
 };
 
+// Generate quiz questions using Claude AI based on test name, subject, and number of questions
+const generateQuizQuestions = async (req, res) => {
+  try {
+    const { testName, subject, numberOfQuestions, mustContainFormulas } = req.body;
+
+    if (!testName || !subject || !numberOfQuestions) {
+      return res.status(400).json({ 
+        error: "testName, subject, and numberOfQuestions are required" 
+      });
+    }
+
+    if (!anthropic) {
+      return res.status(500).json({ 
+        error: "Claude API is not configured. Please set ANTHROPIC_API_KEY in environment variables." 
+      });
+    }
+
+    const numQuestions = parseInt(numberOfQuestions);
+    if (isNaN(numQuestions) || numQuestions <= 0 || numQuestions > 50) {
+      return res.status(400).json({ 
+        error: "numberOfQuestions must be a number between 1 and 50" 
+      });
+    }
+
+    console.log('🤖 Generating quiz questions with Claude AI...');
+    console.log(`   Test: ${testName}`);
+    console.log(`   Subject: ${subject}`);
+    console.log(`   Number of questions: ${numQuestions}`);
+    console.log(`   Must contain formulas: ${mustContainFormulas ? 'Yes' : 'No'}`);
+
+    const formulaRequirement = mustContainFormulas 
+      ? `\nIMPORTANT: ALL questions MUST contain mathematical or chemical formulas. Use LaTeX format for formulas:
+   - Inline: $H_2O$, $x^2$, $\\frac{a}{b}$
+   - Block: $$\\int_0^1 x dx$$, $$\\sum_{i=1}^{n} i$$
+   - Include formulas in both question text and options where appropriate`
+      : `\nFor mathematical or chemical formulas (if applicable), use LaTeX format:
+   - Inline: $H_2O$, $x^2$, $\\frac{a}{b}$
+   - Block: $$\\int_0^1 x dx$$, $$\\sum_{i=1}^{n} i$$`;
+
+    const prompt = `You are an expert quiz generator for educational content. Generate ${numQuestions} high-quality multiple-choice quiz questions for the following specifications:
+
+TEST: ${testName}
+SUBJECT: ${subject}
+NUMBER OF QUESTIONS: ${numQuestions}
+${mustContainFormulas ? 'REQUIREMENT: ALL questions MUST contain formulas' : ''}
+
+CRITICAL INSTRUCTIONS:
+1. Generate exactly ${numQuestions} questions relevant to the test and subject
+2. Each question should be:
+   - Clear and well-formulated
+   - Appropriate for the test level (${testName})
+   - Covering important topics in ${subject}
+   - With 4 options (A, B, C, D)
+   - One correct answer that exactly matches one of the options
+${formulaRequirement}
+4. Questions should vary in difficulty and cover different aspects of ${subject}
+5. Make questions realistic and educational
+6. Return ONLY valid JSON - no markdown, no explanations, just the JSON array
+
+OUTPUT FORMAT - Return ONLY this JSON structure (no other text):
+[
+  {
+    "questionText": "Question text here. Use $formula$ for inline math and $$formula$$ for block math",
+    "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
+    "answer": "Option A text",
+    "imageUrl": "",
+    "marks": 1
+  }
+]
+
+Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
+
+    console.log('🤖 Sending request to Claude API...');
+    
+    // Try different model names in order of preference
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307"
+    ];
+    
+    let message = null;
+    let lastError = null;
+    
+    // Try each model until one works
+    for (const modelName of modelNames) {
+      try {
+        console.log(`   Trying model: ${modelName}`);
+        message = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 2048,
+          temperature: 0.7, // Slightly higher for more creative questions
+          messages: [{
+            role: "user",
+            content: prompt
+          }]
+        });
+        console.log(`   ✅ Successfully used model: ${modelName}`);
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+        console.warn(`   ⚠️ Model ${modelName} failed:`, modelError.message);
+      }
+    }
+    
+    if (!message) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    }
+
+    const claudeResponse = message.content[0].text;
+    console.log('✅ Received response from Claude');
+    console.log('   Response length:', claudeResponse.length, 'characters');
+
+    // Parse Claude's JSON response
+    let questions = [];
+    try {
+      questions = parseClaudeJSON(claudeResponse);
+      
+      if (!Array.isArray(questions)) {
+        throw new Error('Response is not an array');
+      }
+    } catch (parseError) {
+      console.error('❌ Error parsing Claude response:', parseError);
+      console.error('   Response preview:', claudeResponse.substring(0, 500));
+      console.error('   Error position info:', parseError.message);
+      return res.status(500).json({ 
+        error: "Failed to parse AI response. Please try again.",
+        details: parseError.message
+      });
+    }
+
+    // Validate and clean questions
+    const validatedQuestions = questions
+      .map((q, index) => {
+        if (!q.questionText || typeof q.questionText !== 'string') {
+          console.warn(`⚠️ Question ${index + 1}: Missing or invalid questionText`);
+          return null;
+        }
+        
+        if (!Array.isArray(q.options) || q.options.length < 2) {
+          console.warn(`⚠️ Question ${index + 1}: Invalid options`);
+          return null;
+        }
+        
+        if (!q.answer || typeof q.answer !== 'string') {
+          console.warn(`⚠️ Question ${index + 1}: Missing answer`);
+          return null;
+        }
+        
+        // Ensure answer matches one of the options
+        const answerMatches = q.options.some(opt => 
+          opt.trim() === q.answer.trim() || 
+          opt.toString().trim() === q.answer.toString().trim()
+        );
+        
+        if (!answerMatches) {
+          console.warn(`⚠️ Question ${index + 1}: Answer doesn't match any option`);
+          // Try to fix by finding closest match
+          const matchingOption = q.options.find(opt => 
+            opt.toString().toLowerCase().includes(q.answer.toString().toLowerCase()) ||
+            q.answer.toString().toLowerCase().includes(opt.toString().toLowerCase())
+          );
+          if (matchingOption) {
+            q.answer = matchingOption;
+          } else {
+            return null;
+          }
+        }
+        
+        return {
+          questionText: q.questionText.trim(),
+          options: q.options.map(opt => opt.toString().trim()).filter(opt => opt !== ''),
+          answer: q.answer.trim(),
+          imageUrl: (q.imageUrl && q.imageUrl.trim()) ? q.imageUrl.trim() : '',
+          marks: q.marks || 1
+        };
+      })
+      .filter(q => q !== null);
+
+    console.log('✅ Validated', validatedQuestions.length, 'questions');
+
+    if (validatedQuestions.length === 0) {
+      return res.status(500).json({ 
+        error: "No valid questions were generated. Please try again with different parameters."
+      });
+    }
+
+    // Return generated questions
+    res.status(200).json({
+      success: true,
+      data: {
+        totalQuestions: validatedQuestions.length,
+        questions: validatedQuestions,
+        testName,
+        subject
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error generating quiz questions:', error);
+    res.status(500).json({ 
+      error: error.message || "Failed to generate quiz questions",
+      details: error.stack
+    });
+  }
+};
+
 
   module.exports = {
     addCourse,
@@ -2262,5 +2687,6 @@ Now extract and generate all quiz questions from the above content. Return ONLY 
     pdfUpload, // Export PDF upload middleware (memory storage)
     uploadQuestionImage,
     uploadTestImage,
-    parsePdf
+    parsePdf,
+    generateQuizQuestions
   }
