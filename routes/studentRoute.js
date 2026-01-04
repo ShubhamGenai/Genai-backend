@@ -56,6 +56,9 @@ router.get("/getTestSubmissionHistory/:testId", authMiddleware, studentControlle
 // Get detailed submission results
 router.get("/getTestSubmissionDetails/:submissionId", authMiddleware, studentController.getTestSubmissionDetails);
 
+// AI Chat endpoint
+router.post("/ai-chat", authMiddleware, studentController.aiChat);
+
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
 // router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);

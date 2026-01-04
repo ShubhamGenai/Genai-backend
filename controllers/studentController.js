@@ -13,7 +13,21 @@ const EnrolledTest = require("../models/testModel/enrolledTest");
 const Module = require("../models/courseModel/module");
 const { default:mongoose } = require("mongoose");
 const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
+const Anthropic = require("@anthropic-ai/sdk");
 dotenv.config();
+
+// Initialize Anthropic (Claude) client for AI chat
+let anthropic = null;
+const DEFAULT_CLAUDE_MODEL = process.env.CLAUDE_MODEL_NAME || "claude-3-sonnet-20240229";
+
+if (process.env.ANTHROPIC_API_KEY) {
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+  console.log('✅ Anthropic (Claude) API initialized for AI chat');
+} else {
+  console.warn('⚠️ ANTHROPIC_API_KEY not found. AI chat will not work.');
+}
 
 
 const getCourse = async (req, res) => {
@@ -1254,6 +1268,218 @@ const getLatestCoursesAndTests = async (req, res) => {
   }
 };
 
+// AI Chat endpoint - Provides personalized AI assistance based on user performance
+const aiChat = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { message, conversationHistory = [] } = req.body;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        message: "User not authenticated" 
+      });
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Message is required" 
+      });
+    }
+
+    if (!anthropic) {
+      return res.status(500).json({ 
+        success: false,
+        message: "AI service is not available. Please try again later." 
+      });
+    }
+
+    // Fetch user performance data for context
+    let performanceContext = '';
+    let performanceData = null;
+    try {
+      const student = await Student.findOne({ userId });
+      if (student) {
+        // Get enrolled tests with attempts
+        const enrolledTestRecords = await EnrolledTest.find({ studentId: student._id })
+          .populate('testId', 'title level company category')
+          .sort({ createdAt: -1 })
+          .limit(10);
+
+        // Get enrolled courses
+        const enrolledCourseRecords = await EnrolledCourse.find({ studentId: student._id })
+          .populate('courseId', 'title level category')
+          .sort({ createdAt: -1 })
+          .limit(10);
+
+        // Calculate performance metrics
+        let totalScore = 0;
+        let scoreCount = 0;
+        const testScores = [];
+        const weakAreas = [];
+        const strongAreas = [];
+
+        for (const record of enrolledTestRecords) {
+          if (record.testAttempts && record.testAttempts.length > 0) {
+            const latestAttempt = record.testAttempts[record.testAttempts.length - 1];
+            if (latestAttempt.score !== null && latestAttempt.score !== undefined) {
+              totalScore += latestAttempt.score;
+              scoreCount++;
+              testScores.push({
+                test: record.testId?.title || 'Test',
+                subject: record.testId?.company || record.testId?.category || 'General',
+                score: latestAttempt.score,
+                date: latestAttempt.attemptDate
+              });
+
+              // Categorize performance
+              if (latestAttempt.score >= 80) {
+                strongAreas.push(record.testId?.company || record.testId?.category || 'General');
+              } else if (latestAttempt.score < 60) {
+                weakAreas.push(record.testId?.company || record.testId?.category || 'General');
+              }
+            }
+          }
+        }
+
+        const avgScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
+        const completedCourses = enrolledCourseRecords.filter(c => c.isCompleted).length;
+        const coursesInProgress = enrolledCourseRecords.length - completedCourses;
+
+        // Store performance data for response
+        performanceData = {
+          avgScore,
+          scoreCount,
+          completedCourses,
+          coursesInProgress,
+          testScores: testScores.slice(0, 5),
+          strongAreas: [...new Set(strongAreas)],
+          weakAreas: [...new Set(weakAreas)],
+          enrolledTests: enrolledTestRecords.map(t => t.testId?.title).filter(Boolean),
+          enrolledCourses: enrolledCourseRecords.map(c => c.courseId?.title).filter(Boolean)
+        };
+
+        // Build performance context
+        performanceContext = `
+STUDENT PERFORMANCE SUMMARY:
+- Average Test Score: ${avgScore}%
+- Total Tests Attempted: ${scoreCount}
+- Courses Completed: ${completedCourses}
+- Courses In Progress: ${coursesInProgress}
+${testScores.length > 0 ? `- Recent Test Scores:\n${testScores.slice(0, 5).map(t => `  * ${t.test} (${t.subject}): ${t.score}%`).join('\n')}` : ''}
+${strongAreas.length > 0 ? `- Strong Areas: ${[...new Set(strongAreas)].join(', ')}` : ''}
+${weakAreas.length > 0 ? `- Areas Needing Improvement: ${[...new Set(weakAreas)].join(', ')}` : ''}
+${enrolledTestRecords.length > 0 ? `- Enrolled Tests: ${enrolledTestRecords.map(t => t.testId?.title).filter(Boolean).join(', ')}` : ''}
+${enrolledCourseRecords.length > 0 ? `- Enrolled Courses: ${enrolledCourseRecords.map(c => c.courseId?.title).filter(Boolean).join(', ')}` : ''}
+`;
+      }
+    } catch (perfError) {
+      console.error('Error fetching performance data:', perfError);
+      // Continue without performance context
+    }
+
+    // Build system prompt with performance context
+    const systemPrompt = `You are an AI learning assistant for an educational platform. Your role is to help students improve their performance by providing personalized guidance, study suggestions, and answering questions about their learning journey.
+
+${performanceContext ? `Here is the student's current performance data:\n${performanceContext}\n` : 'No performance data available yet. The student is new to the platform.'}
+
+Guidelines:
+1. Provide helpful, encouraging, and constructive feedback
+2. Analyze their performance data and give specific, actionable suggestions
+3. Recommend tests, courses, or study strategies based on their weak and strong areas
+4. Be conversational and friendly, but professional
+5. If asked about performance, reference the data provided above
+6. Suggest specific improvements and next steps
+7. Keep responses concise but informative (2-3 paragraphs max)
+8. If you don't have enough information, ask clarifying questions
+9. Use bullet points or numbered lists when giving multiple suggestions
+10. Be specific about which tests or courses to focus on based on their data
+11. IMPORTANT: When explaining mathematical or scientific concepts, ALWAYS use LaTeX formulas:
+    - For inline formulas: Use $formula$ (e.g., $E = mc^2$, $x^2 + y^2 = z^2$)
+    - For block/display formulas: Use $$formula$$ (e.g., $$\\int_0^1 x dx = \\frac{1}{2}$$)
+    - Use proper LaTeX syntax for fractions, integrals, summations, etc.
+    - Examples: $\\frac{a}{b}$, $\\sqrt{x}$, $\\sum_{i=1}^{n}$, $\\int_a^b f(x)dx$
+12. When students ask questions with formulas, acknowledge them and provide detailed explanations with proper mathematical notation
+13. For chemistry: Use formulas like $H_2O$, $CO_2$, $\\ce{H2SO4}$ when appropriate
+
+Answer the student's question now:`;
+
+    // Build conversation history for context
+    const messages = [];
+    
+    // Add system message
+    messages.push({
+      role: "user",
+      content: systemPrompt
+    });
+
+    // Add conversation history (last 5 messages for context)
+    const recentHistory = conversationHistory.slice(-5);
+    recentHistory.forEach(msg => {
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        messages.push({
+          role: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.content
+        });
+      }
+    });
+
+    // Add current message
+    messages.push({
+      role: "user",
+      content: message
+    });
+
+    // Call Claude API
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307"
+    ];
+
+    let response = null;
+    let lastError = null;
+
+    for (const modelName of modelNames) {
+      try {
+        response = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 1024,
+          temperature: 0.7,
+          messages: messages
+        });
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+        console.warn(`Model ${modelName} failed:`, modelError.message);
+      }
+    }
+
+    if (!response) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    }
+
+    const aiResponse = response.content[0].text;
+
+    res.status(200).json({
+      success: true,
+      response: aiResponse,
+      performanceData: performanceData,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error in AI chat:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to get AI response. Please try again.",
+      error: error.message 
+    });
+  }
+};
+
 
 
 
@@ -1290,5 +1516,6 @@ const getLatestCoursesAndTests = async (req, res) => {
     getDashboardOverview,
     submitTest,
     getTestSubmissionHistory,
-    getTestSubmissionDetails
+    getTestSubmissionDetails,
+    aiChat
   };
