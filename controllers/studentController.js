@@ -1289,9 +1289,10 @@ const aiChat = async (req, res) => {
     }
 
     if (!anthropic) {
+      console.error('❌ Anthropic client not initialized. Check ANTHROPIC_API_KEY environment variable.');
       return res.status(500).json({ 
         success: false,
-        message: "AI service is not available. Please try again later." 
+        message: "AI service is not available. Please contact support." 
       });
     }
 
@@ -1471,11 +1472,28 @@ Answer the student's question now:`;
     });
 
   } catch (error) {
-    console.error('Error in AI chat:', error);
+    console.error('❌ Error in AI chat:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      userId: req.user?.id || req.user?._id
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = "Failed to get AI response. Please try again.";
+    
+    if (error.message?.includes('API key')) {
+      errorMessage = "AI service configuration error. Please contact support.";
+    } else if (error.message?.includes('rate limit')) {
+      errorMessage = "AI service is busy. Please try again in a moment.";
+    } else if (error.message?.includes('timeout')) {
+      errorMessage = "Request timed out. Please try again.";
+    }
+    
     res.status(500).json({ 
       success: false,
-      message: "Failed to get AI response. Please try again.",
-      error: error.message 
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
