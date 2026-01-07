@@ -60,6 +60,9 @@ router.get("/getTestSubmissionDetails/:submissionId", authMiddleware, studentCon
 // AI Chat endpoint
 router.post("/ai-chat", authMiddleware, studentController.aiChat);
 
+// Generate question explanation
+router.post("/generate-question-explanation", authMiddleware, studentController.generateQuestionExplanation);
+
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
 // router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);

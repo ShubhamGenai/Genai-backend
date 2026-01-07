@@ -1353,6 +1353,124 @@ const getLatestCoursesAndTests = async (req, res) => {
   }
 };
 
+// Generate AI explanation for a question
+const generateQuestionExplanation = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { questionText, options, correctAnswer, selectedAnswer, subject } = req.body;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        message: "User not authenticated" 
+      });
+    }
+
+    if (!questionText || !correctAnswer) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Question text and correct answer are required" 
+      });
+    }
+
+    if (!anthropic) {
+      console.error('❌ Anthropic client not initialized. Check ANTHROPIC_API_KEY environment variable.');
+      return res.status(500).json({ 
+        success: false,
+        message: "AI service is not available. Please contact support." 
+      });
+    }
+
+    // Build prompt for explanation
+    const optionsText = options && options.length > 0 
+      ? options.map((opt, idx) => `${String.fromCharCode(65 + idx)}. ${opt}`).join('\n')
+      : 'No options provided';
+    
+    const userAnswerText = selectedAnswer !== null && selectedAnswer !== undefined 
+      ? `The student selected: ${selectedAnswer}`
+      : 'The student did not answer this question.';
+    
+    const prompt = `You are an expert educational tutor. Explain the following test question and provide a detailed explanation of why the correct answer is correct.
+
+Question: ${questionText}
+
+Options:
+${optionsText}
+
+Correct Answer: ${correctAnswer}
+${userAnswerText}
+
+${subject ? `Subject/Topic: ${subject}` : ''}
+
+Please provide:
+1. A clear explanation of why the correct answer (${correctAnswer}) is correct
+2. Brief explanations of why other options are incorrect (if applicable)
+3. Key concepts or formulas related to this question
+4. Any additional context that would help the student understand the topic better
+
+IMPORTANT: 
+- Use LaTeX format for mathematical formulas: $formula$ for inline and $$formula$$ for block
+- Keep the explanation clear, concise, and educational
+- Focus on helping the student understand the concept, not just memorize the answer
+- If the question involves formulas or equations, show the working steps
+
+Provide your explanation:`;
+
+    console.log('🤖 Generating question explanation...');
+    
+    // Use model fallback mechanism similar to aiChat
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307"
+    ];
+
+    let message = null;
+    let lastError = null;
+
+    for (const modelName of modelNames) {
+      try {
+        message = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 1024,
+          temperature: 0.7,
+          messages: [{
+            role: "user",
+            content: prompt
+          }]
+        });
+        console.log(`✅ Successfully used model: ${modelName}`);
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+        console.warn(`⚠️ Model ${modelName} failed:`, modelError.message);
+      }
+    }
+
+    if (!message) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    }
+
+    const explanation = message.content[0].text;
+    console.log('✅ Generated explanation successfully');
+
+    return res.json({
+      success: true,
+      explanation: explanation
+    });
+
+  } catch (error) {
+    console.error('❌ Error generating question explanation:', error);
+    const errorMessage = error.message || 'Failed to generate explanation';
+    return res.status(500).json({
+      success: false,
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // AI Chat endpoint - Provides personalized AI assistance based on user performance
 const aiChat = async (req, res) => {
   try {
@@ -1621,5 +1739,6 @@ Answer the student's question now:`;
     submitTest,
     getTestSubmissionHistory,
     getTestSubmissionDetails,
-    aiChat
+    aiChat,
+    generateQuestionExplanation
   };
