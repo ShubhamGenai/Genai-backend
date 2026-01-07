@@ -11,6 +11,7 @@ const TestSchema = new mongoose.Schema(
       actual: { type: Number, required: true },
       discounted: { type: Number, required: true }
     },
+  isFree: { type: Boolean, default: false },
     image: {
       type: String,
       default: 'https://res.cloudinary.com/djkbpwqpm/image/upload/v1746691763/jee_kai0bt.png' // Replace with your default image URL

@@ -22,6 +22,7 @@ router.post("/submitTest",authMiddleware,studentController.submitTest)
 //test payment
 router.post("/create-payment",authMiddleware,studentController.createOrder);
 router.post("/verify-payment",authMiddleware,studentController.verifyPayment);
+router.post("/enroll-free-test",authMiddleware,studentController.enrollFreeTest);
 
 
 //course/

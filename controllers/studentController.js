@@ -543,6 +543,91 @@ const getCourse = async (req, res) => {
     }
   };
 
+  // Enroll in free test (no payment required)
+  const enrollFreeTest = async (req, res) => {
+    try {
+      const { testId } = req.body;
+      const userId = req.user?.id || req.user?._id;
+
+      if (!testId) {
+        return res.status(400).json({ success: false, message: "Test ID is required" });
+      }
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      // Check if test exists and is free
+      const test = await Test.findById(testId);
+      if (!test) {
+        return res.status(404).json({ success: false, message: "Test not found" });
+      }
+
+      // Verify test is free
+      const isTestFree = test.isFree === true || 
+                        (test.price?.actual === 0 && test.price?.discounted === 0) ||
+                        (!test.price?.actual && !test.price?.discounted);
+      
+      if (!isTestFree) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "This test is not free. Please use the payment flow to enroll." 
+        });
+      }
+
+      // Find student using userId (Student model has userId field referencing User)
+      const student = await Student.findOne({ userId });
+      if (!student) {
+        return res.status(404).json({ success: false, message: "Student not found" });
+      }
+
+      const studentId = student._id;
+
+      if (student.enrolledTests.includes(testId)) {
+        return res.json({ 
+          success: true, 
+          message: "You are already enrolled in this test",
+          alreadyEnrolled: true
+        });
+      }
+
+      // Enroll student to test
+      student.enrolledTests.push(testId);
+      await student.save();
+
+      // Update the Test model to store student ID
+      if (!test.enrolledStudents.includes(studentId)) {
+        test.enrolledStudents.push(studentId);
+        await test.save();
+      }
+
+      // Create EnrolledTest record
+      await EnrolledTest.create({
+        studentId,
+        testId,
+        paymentStatus: "free", // Mark as free enrollment
+      });
+
+      res.json({ 
+        success: true, 
+        message: "Successfully enrolled in free test",
+        test: {
+          _id: test._id,
+          title: test.title,
+          isFree: test.isFree
+        }
+      });
+
+    } catch (err) {
+      console.error("Error enrolling in free test:", err);
+      res.status(500).json({ 
+        success: false, 
+        message: "Error enrolling in test", 
+        error: err.message 
+      });
+    }
+  };
+
 
 const getModulesDetails = async (req, res) => {
 
@@ -1521,6 +1606,7 @@ Answer the student's question now:`;
     submitQuiz,
     createOrder,
     verifyPayment,
+    enrollFreeTest,
     getCourse,
     getCartCourses,
     getModulesDetails,

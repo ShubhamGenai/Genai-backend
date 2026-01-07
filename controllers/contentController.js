@@ -1112,7 +1112,7 @@ const addTest = async (req, res) => {
       description,
       duration,
       numberOfQuestions,
-      price: { actual, discounted },
+      price,
       level,
       category,
       features,
@@ -1122,15 +1122,39 @@ const addTest = async (req, res) => {
       passingScore,
       image, // Test image URL from Cloudinary
       imagePublicId, // Test image public ID from Cloudinary
-      ratings = [] // optional: handle if ratings are not provided
+      ratings = [], // optional: handle if ratings are not provided
+      isFree = false
     } = req.body;
 
     let quizIds = [];
     let totalMarks = 0;
 
+    // Normalize pricing based on isFree flag
+    const isTestFree = Boolean(isFree);
+    const actual = price?.actual;
+    const discounted = price?.discounted;
+
     // Validate required fields
-    if (!title || !company || !description || !duration || !numberOfQuestions || !actual || !discounted || !level) {
+    if (!title || !company || !description || !duration || !numberOfQuestions || !level) {
       return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // For paid tests, ensure both prices are provided and valid
+    if (!isTestFree) {
+      if (actual === undefined || actual === null || actual === "" || isNaN(Number(actual)) || Number(actual) < 0) {
+        return res.status(400).json({ error: "Actual price is required and must be a valid number for paid tests" });
+      }
+      if (discounted === undefined || discounted === null || discounted === "" || isNaN(Number(discounted)) || Number(discounted) < 0) {
+        return res.status(400).json({ error: "Discounted price is required and must be a valid number for paid tests" });
+      }
+    }
+
+    // Resolve final price values
+    const finalActual = isTestFree ? 0 : Number(actual || 0);
+    const finalDiscounted = isTestFree ? 0 : Number(discounted || 0);
+
+    if (Number.isNaN(finalActual) || Number.isNaN(finalDiscounted)) {
+      return res.status(400).json({ error: "Invalid price values" });
     }
 
     // Save multiple quizzes and calculate total marks
@@ -1158,9 +1182,10 @@ const addTest = async (req, res) => {
       duration,
       numberOfQuestions,
       price: {
-        actual,
-        discounted
+        actual: finalActual,
+        discounted: finalDiscounted
       },
+      isFree: isTestFree,
       image: image || undefined, // Use provided image URL or default from schema
       imagePublicId: imagePublicId || undefined, // Store Cloudinary public ID if provided
       category: category || undefined,
@@ -1190,7 +1215,150 @@ const addTest = async (req, res) => {
   }
 };
 
+// Update test
+const updateTest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid test ID" });
+    }
 
+    const existingTest = await Test.findById(id);
+    if (!existingTest) {
+      return res.status(404).json({ error: "Test not found" });
+    }
+
+    const {
+      title,
+      company,
+      description,
+      duration,
+      numberOfQuestions,
+      price,
+      level,
+      category,
+      features,
+      skills,
+      certificate,
+      quizzes,
+      passingScore,
+      image,
+      imagePublicId,
+      isFree = false
+    } = req.body;
+
+    let quizIds = [];
+    let totalMarks = 0;
+
+    // Normalize pricing based on isFree flag
+    const isTestFree = Boolean(isFree);
+    const actual = price?.actual;
+    const discounted = price?.discounted;
+
+    // Validate required fields
+    if (!title || !company || !description || !duration || !numberOfQuestions || !level) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // For paid tests, ensure both prices are provided and valid
+    if (!isTestFree) {
+      if (actual === undefined || actual === null || actual === "" || isNaN(Number(actual)) || Number(actual) < 0) {
+        return res.status(400).json({ error: "Actual price is required and must be a valid number for paid tests" });
+      }
+      if (discounted === undefined || discounted === null || discounted === "" || isNaN(Number(discounted)) || Number(discounted) < 0) {
+        return res.status(400).json({ error: "Discounted price is required and must be a valid number for paid tests" });
+      }
+    }
+
+    // Resolve final price values
+    const finalActual = isTestFree ? 0 : Number(actual || 0);
+    const finalDiscounted = isTestFree ? 0 : Number(discounted || 0);
+
+    if (Number.isNaN(finalActual) || Number.isNaN(finalDiscounted)) {
+      return res.status(400).json({ error: "Invalid price values" });
+    }
+
+    // Handle quizzes - create new ones or update existing
+    if (quizzes && Array.isArray(quizzes)) {
+      for (const quizData of quizzes) {
+        // If quiz has _id, it's an existing quiz - update it
+        if (quizData._id && mongoose.Types.ObjectId.isValid(quizData._id)) {
+          const existingQuiz = await Quiz.findById(quizData._id);
+          if (existingQuiz) {
+            // Update existing quiz
+            existingQuiz.title = quizData.title || existingQuiz.title;
+            existingQuiz.duration = quizData.duration || existingQuiz.duration;
+            existingQuiz.questions = quizData.questions || existingQuiz.questions;
+            await existingQuiz.save();
+            quizIds.push(existingQuiz._id);
+            totalMarks += (quizData.questions?.length || existingQuiz.questions?.length || 0) * 10;
+          }
+        } else {
+          // New quiz - create it
+          const newQuiz = new Quiz(quizData);
+          await newQuiz.save();
+          quizIds.push(newQuiz._id);
+          totalMarks += (quizData.questions?.length || 0) * 10;
+        }
+      }
+    } else {
+      // If no quizzes provided, keep existing ones
+      quizIds = existingTest.quizzes || [];
+      totalMarks = existingTest.totalMarks || 0;
+    }
+
+    // Preserve ratings and reviews
+    const ratings = existingTest.ratings || [];
+    let averageRating = existingTest.averageRating || 0;
+    const totalReviews = ratings.length;
+    if (totalReviews > 0) {
+      const total = ratings.reduce((sum, r) => sum + r.rating, 0);
+      averageRating = total / totalReviews;
+    }
+
+    // Update the test
+    const updatedTest = await Test.findByIdAndUpdate(
+      id,
+      {
+        title,
+        company,
+        description,
+        duration: Number(duration),
+        numberOfQuestions: Number(numberOfQuestions),
+        price: {
+          actual: finalActual,
+          discounted: finalDiscounted
+        },
+        isFree: isTestFree,
+        image: image !== undefined ? image : existingTest.image,
+        imagePublicId: imagePublicId !== undefined ? imagePublicId : existingTest.imagePublicId,
+        category: category !== undefined ? category : existingTest.category,
+        level,
+        features: features || [],
+        skills: skills || [],
+        certificate: certificate !== undefined ? certificate : existingTest.certificate,
+        quizzes: quizIds,
+        passingScore: passingScore !== undefined ? Number(passingScore) : existingTest.passingScore,
+        totalMarks,
+        ratings,
+        averageRating,
+        totalReviews
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json({ 
+      message: "Test updated successfully", 
+      test: updatedTest 
+    });
+  } catch (error) {
+    console.error("Error updating test:", error);
+    res.status(400).json({ 
+      error: error.message || "Failed to update test" 
+    });
+  }
+};
 
 // Fetch all tests for content manager (independent from student routes)
 const getTests = async (req, res) => {
@@ -1702,6 +1870,48 @@ const uploadQuestionImage = async (req, res) => {
     console.error("Error uploading image:", error);
     res.status(400).json({
       error: error.message || "Failed to upload image"
+    });
+  }
+};
+
+// Get existing test images (for re-use in test creation)
+// Returns recent distinct test images with basic metadata
+const getTestImages = async (req, res) => {
+  try {
+    // Find tests that have an image set
+    const testsWithImages = await Test.find(
+      { image: { $exists: true, $ne: null } },
+      { image: 1, imagePublicId: 1, title: 1, createdAt: 1 }
+    )
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .lean();
+
+    // Map to a simple image list and de-duplicate by URL
+    const seen = new Set();
+    const images = [];
+
+    for (const t of testsWithImages) {
+      if (!t.image || seen.has(t.image)) continue;
+      seen.add(t.image);
+      images.push({
+        imageUrl: t.image,
+        imagePublicId: t.imagePublicId || null,
+        title: t.title || "Test image",
+        createdAt: t.createdAt,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      images,
+      count: images.length,
+    });
+  } catch (error) {
+    console.error("Error fetching test images:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch test images",
     });
   }
 };
@@ -2663,6 +2873,7 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
     updateModule,
     deleteModule,
     addTest,
+    updateTest,
     addQuiz,
     updateQuiz,
     deleteQuiz,
@@ -2686,7 +2897,8 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
     uploadImage, // Export image upload middleware
     pdfUpload, // Export PDF upload middleware (memory storage)
     uploadQuestionImage,
-    uploadTestImage,
+  uploadTestImage,
+  getTestImages,
     parsePdf,
     generateQuizQuestions
   }
