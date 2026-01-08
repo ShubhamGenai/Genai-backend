@@ -1463,20 +1463,29 @@ const addQuiz = async (req, res) => {
       if (!q.questionText || q.questionText.trim() === '') {
         return res.status(400).json({ error: `Question ${i + 1}: Question text is required.` });
       }
-      if (!q.options || !Array.isArray(q.options) || q.options.length < 2) {
-        return res.status(400).json({ error: `Question ${i + 1}: At least 2 options are required.` });
+      if (!q.options || !Array.isArray(q.options)) {
+        return res.status(400).json({ error: `Question ${i + 1}: Options must be an array.` });
       }
-      // Check if at least 2 options have text
-      const validOptions = q.options.filter(opt => opt && opt.trim() !== '');
+      
+      // Filter and trim options first (same logic as when saving)
+      const validOptions = q.options
+        .map(opt => String(opt).trim())
+        .filter(opt => opt !== '');
+      
       if (validOptions.length < 2) {
         return res.status(400).json({ error: `Question ${i + 1}: At least 2 valid options are required.` });
       }
-      if (!q.answer || q.answer.trim() === '') {
+      
+      if (!q.answer || String(q.answer).trim() === '') {
         return res.status(400).json({ error: `Question ${i + 1}: Correct answer is required.` });
       }
-      // Check if answer matches one of the options
-      if (!q.options.includes(q.answer)) {
-        return res.status(400).json({ error: `Question ${i + 1}: Answer must match one of the options.` });
+      
+      // Trim answer and check if it matches one of the valid (filtered) options
+      const trimmedAnswer = String(q.answer).trim();
+      if (!validOptions.includes(trimmedAnswer)) {
+        return res.status(400).json({ 
+          error: `Question ${i + 1}: Answer "${trimmedAnswer}" must match one of the options: ${validOptions.join(', ')}` 
+        });
       }
     }
 
@@ -1484,13 +1493,20 @@ const addQuiz = async (req, res) => {
     const newQuiz = new Quiz({ 
       title: title.trim(), 
       duration: parseInt(duration), 
-      questions: questions.map(q => ({
-        questionText: q.questionText.trim(),
-        options: q.options.map(opt => opt.trim()).filter(opt => opt !== ''),
-        answer: q.answer.trim(),
-        imageUrl: q.imageUrl || '',
-        marks: q.marks || 1
-      }))
+      questions: questions.map(q => {
+        // Use the same filtering logic as validation
+        const validOptions = q.options
+          .map(opt => String(opt).trim())
+          .filter(opt => opt !== '');
+        
+        return {
+          questionText: String(q.questionText).trim(),
+          options: validOptions,
+          answer: String(q.answer).trim(),
+          imageUrl: (q.imageUrl && String(q.imageUrl).trim()) ? String(q.imageUrl).trim() : '',
+          marks: q.marks && !isNaN(parseInt(q.marks)) ? parseInt(q.marks) : 1
+        };
+      })
     });
     
     await newQuiz.save();
