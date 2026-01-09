@@ -1159,7 +1159,10 @@ const addTest = async (req, res) => {
 
     // Save multiple quizzes and calculate total marks
     for (const quizData of quizzes) {
-      const newQuiz = new Quiz(quizData);
+      // Always strip _id to avoid duplicate key errors if frontend
+      // accidentally sends an existing quiz _id for a new quiz
+      const { _id, ...quizWithoutId } = quizData || {};
+      const newQuiz = new Quiz(quizWithoutId);
       await newQuiz.save();
 
       quizIds.push(newQuiz._id);
@@ -1295,8 +1298,9 @@ const updateTest = async (req, res) => {
             totalMarks += (quizData.questions?.length || existingQuiz.questions?.length || 0) * 10;
           }
         } else {
-          // New quiz - create it
-          const newQuiz = new Quiz(quizData);
+          // New quiz - create it (strip any _id to avoid duplicate key errors)
+          const { _id, ...quizWithoutId } = quizData || {};
+          const newQuiz = new Quiz(quizWithoutId);
           await newQuiz.save();
           quizIds.push(newQuiz._id);
           totalMarks += (quizData.questions?.length || 0) * 10;
