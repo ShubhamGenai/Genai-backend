@@ -1,4 +1,3 @@
-const otpGenerator = require('otp-generator');
 const nodemailer = require('nodemailer');
 const emailConfig = require('../config/emailConfig');
 
@@ -14,12 +13,29 @@ const transporter = nodemailer.createTransport({
   maxMessages: 10, // Messages per connection
 });
 
+// Verify transporter configuration on startup
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('❌ Email transporter verification failed:', error);
+  } else {
+    console.log('✅ Email transporter is ready to send emails');
+    console.log(`   - Service: Gmail`);
+    console.log(`   - From: ${emailConfig.auth.user}`);
+  }
+});
+
 // Generate a 6-digit OTP (numeric only) - Optimized
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 // Send OTP email asynchronously
 const sendOtpEmail = async (email, otp) => {
- const htmlContent = `
+  try {
+    // Validate inputs
+    if (!email || !otp) {
+      throw new Error('Email and OTP are required');
+    }
+
+    const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -88,21 +104,43 @@ const sendOtpEmail = async (email, otp) => {
 </html>
 `;
 
-  const mailOptions = {
-    from: emailConfig.auth.user,
-    to: email,
-    subject: 'Your OTP Code',
-    html: htmlContent
-  };
+    const mailOptions = {
+      from: emailConfig.auth.user,
+      to: email,
+      subject: 'Your OTP Code',
+      html: htmlContent
+    };
 
-  setImmediate(async () => {
-    try {
-      await transporter.sendMail(mailOptions);
-      console.log('OTP email sent successfully.');
-    } catch (error) {
-      console.error('Error sending OTP email:', error);
+    console.log(`📧 Attempting to send OTP email to: ${email}`);
+
+    // Send email and wait for it to complete
+    const info = await transporter.sendMail(mailOptions);
+    
+    // Log success with detailed information
+    console.log(`✅ OTP email sent successfully!`);
+    console.log(`   - Recipient: ${email}`);
+    console.log(`   - Message ID: ${info.messageId}`);
+    console.log(`   - Response: ${info.response || 'N/A'}`);
+    console.log(`   - From: ${emailConfig.auth.user}`);
+    
+    return info;
+  } catch (error) {
+    // Enhanced error logging
+    console.error('❌ Error sending OTP email:');
+    console.error(`   - Email: ${email}`);
+    console.error(`   - Error: ${error.message}`);
+    if (error.code) {
+      console.error(`   - Error Code: ${error.code}`);
     }
-  });
+    if (error.response) {
+      console.error(`   - Response: ${error.response}`);
+    }
+    if (error.responseCode) {
+      console.error(`   - Response Code: ${error.responseCode}`);
+    }
+    // Re-throw the error so the caller can handle it
+    throw new Error(`Failed to send OTP email: ${error.message}`);
+  }
 };
 
 module.exports = {
