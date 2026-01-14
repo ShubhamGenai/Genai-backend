@@ -1706,6 +1706,218 @@ Answer the student's question now:`;
 
 
 
+// AI Career Recommendations endpoint - Generates personalized career path recommendations
+const getAICareerRecommendations = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        message: "User not authenticated" 
+      });
+    }
+
+    if (!anthropic) {
+      console.error('❌ Anthropic client not initialized. Check ANTHROPIC_API_KEY environment variable.');
+      return res.status(500).json({ 
+        success: false,
+        message: "AI service is not available. Please contact support." 
+      });
+    }
+
+    // Fetch user data
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    // Fetch student performance data
+    const student = await Student.findOne({ userId });
+    let performanceContext = '';
+    let userProfile = '';
+
+    if (student) {
+      // Get enrolled tests with attempts
+      const enrolledTestRecords = await EnrolledTest.find({ studentId: student._id })
+        .populate('testId', 'title level company category')
+        .sort({ createdAt: -1 })
+        .limit(10);
+
+      // Get enrolled courses
+      const enrolledCourseRecords = await EnrolledCourse.find({ studentId: student._id })
+        .populate('courseId', 'title level category')
+        .sort({ createdAt: -1 })
+        .limit(10);
+
+      // Calculate performance metrics
+      let totalScore = 0;
+      let scoreCount = 0;
+      const testScores = [];
+      const strongAreas = [];
+      const weakAreas = [];
+
+      for (const record of enrolledTestRecords) {
+        if (record.testAttempts && record.testAttempts.length > 0) {
+          const latestAttempt = record.testAttempts[record.testAttempts.length - 1];
+          if (latestAttempt.score !== null && latestAttempt.score !== undefined) {
+            totalScore += latestAttempt.score;
+            scoreCount++;
+            testScores.push({
+              test: record.testId?.title || 'Test',
+              subject: record.testId?.company || record.testId?.category || 'General',
+              score: latestAttempt.score
+            });
+
+            if (latestAttempt.score >= 80) {
+              strongAreas.push(record.testId?.company || record.testId?.category || 'General');
+            } else if (latestAttempt.score < 60) {
+              weakAreas.push(record.testId?.company || record.testId?.category || 'General');
+            }
+          }
+        }
+      }
+
+      const avgScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
+      const completedCourses = enrolledCourseRecords.filter(c => c.isCompleted).length;
+
+      performanceContext = `
+STUDENT PERFORMANCE:
+- Average Test Score: ${avgScore}%
+- Tests Attempted: ${scoreCount}
+- Courses Completed: ${completedCourses}
+- Strong Areas: ${[...new Set(strongAreas)].join(', ') || 'None identified yet'}
+- Areas for Improvement: ${[...new Set(weakAreas)].join(', ') || 'None identified yet'}
+- Recent Test Scores: ${testScores.slice(0, 5).map(t => `${t.test}: ${t.score}%`).join(', ') || 'No tests taken yet'}
+- Enrolled Courses: ${enrolledCourseRecords.map(c => c.courseId?.title).filter(Boolean).join(', ') || 'None'}
+- Enrolled Tests: ${enrolledTestRecords.map(t => t.testId?.title).filter(Boolean).join(', ') || 'None'}
+      `;
+    }
+
+    // Build user profile context
+    userProfile = `
+USER PROFILE:
+- Learning Goal: ${user.learningGoal || 'Not specified'}
+- Exam Preference: ${user.examPreference || 'Not specified'}
+- Preferred Sections: ${user.preferredSections?.join(', ') || 'Not specified'}
+- Study Preference: ${user.studyPreference || 'Not specified'}
+- Role: ${user.role || 'Student'}
+    `;
+
+    // Create AI prompt for career recommendations
+    const prompt = `You are an expert career counselor and educational advisor. Based on the following student information, generate 3 personalized career path recommendations.
+
+${userProfile}
+
+${performanceContext}
+
+Generate exactly 3 career recommendations in the following JSON format (return ONLY valid JSON, no markdown):
+[
+  {
+    "title": "Career path name (e.g., 'Software Engineering', 'Data Science', 'Product Management')",
+    "match": 85,
+    "description": "Brief 1-2 sentence explanation of why this career matches the student's profile and performance",
+    "tags": ["Skill1", "Skill2", "Skill3"]
+  }
+]
+
+Requirements:
+1. Match percentage should be between 70-95 based on how well the career aligns with their performance, goals, and preferences
+2. Descriptions should be specific and reference their actual performance data when available
+3. Tags should be relevant skills/technologies for that career path
+4. Recommendations should be diverse (different career paths)
+5. Consider their learning goal (${user.learningGoal || 'general'}) and exam preferences
+6. If performance data is limited, base recommendations on their stated preferences
+
+Return ONLY the JSON array, no other text.`;
+
+    console.log('🤖 Generating AI career recommendations...');
+    
+    // Try different model names in order of preference
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307"
+    ];
+    
+    let recommendations = null;
+    let lastError = null;
+    
+    // Try each model until one works
+    for (const modelName of modelNames) {
+      try {
+        const response = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 2000,
+          messages: [{
+            role: "user",
+            content: prompt
+          }]
+        });
+
+        const content = response.content[0].text;
+        
+        // Extract JSON from response (handle markdown code blocks if present)
+        let jsonStr = content.trim();
+        if (jsonStr.startsWith('```json')) {
+          jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        } else if (jsonStr.startsWith('```')) {
+          jsonStr = jsonStr.replace(/```\n?/g, '').trim();
+        }
+
+        recommendations = JSON.parse(jsonStr);
+        
+        // Validate recommendations structure
+        if (!Array.isArray(recommendations) || recommendations.length === 0) {
+          throw new Error('Invalid recommendations format');
+        }
+
+        // Ensure each recommendation has required fields
+        recommendations = recommendations.map(rec => ({
+          title: rec.title || 'Career Path',
+          match: Math.min(95, Math.max(70, rec.match || 75)),
+          description: rec.description || 'A promising career path based on your profile.',
+          tags: Array.isArray(rec.tags) ? rec.tags.slice(0, 3) : ['Skills', 'Development', 'Growth'],
+          color: "text-blue-600"
+        }));
+
+        console.log('✅ AI career recommendations generated successfully');
+        break;
+      } catch (error) {
+        console.error(`❌ Error with model ${modelName}:`, error.message);
+        lastError = error;
+        continue;
+      }
+    }
+
+    if (!recommendations) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    }
+
+    res.status(200).json({
+      success: true,
+      recommendations: recommendations
+    });
+
+  } catch (error) {
+    console.error('❌ Error generating AI career recommendations:', error);
+    const errorMessage = error.message || 'Failed to generate career recommendations';
+    
+    res.status(500).json({
+      success: false,
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+
+
+
 
 
 
@@ -1742,5 +1954,6 @@ Answer the student's question now:`;
     getTestSubmissionHistory,
     getTestSubmissionDetails,
     aiChat,
-    generateQuestionExplanation
+    generateQuestionExplanation,
+    getAICareerRecommendations
   };
