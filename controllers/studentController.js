@@ -14,6 +14,7 @@ const Module = require("../models/courseModel/module");
 const { default:mongoose } = require("mongoose");
 const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
 const Anthropic = require("@anthropic-ai/sdk");
+const { formatAiExplanationToHtml } = require('../utils/aiFormatter');
 dotenv.config();
 
 // Initialize Anthropic (Claude) client for AI chat
@@ -1452,12 +1453,13 @@ Provide your explanation:`;
       throw new Error(`All Claude models failed. Last error: ${lastError?.message || 'Unknown error'}`);
     }
 
-    const explanation = message.content[0].text;
+    const rawExplanation = message.content[0].text;
+    const explanationHtml = formatAiExplanationToHtml(rawExplanation);
     console.log('✅ Generated explanation successfully');
 
     return res.json({
       success: true,
-      explanation: explanation
+      explanationHtml: explanationHtml
     });
 
   } catch (error) {
