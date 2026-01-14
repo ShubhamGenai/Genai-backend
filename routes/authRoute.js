@@ -36,5 +36,12 @@ router.post('/login/verify-otp', authController.verifyLoginOtp);
 router.post('/signup/send-otp', authController.sendSignupOtp);
 router.post('/signup/verify-otp', authController.verifySignupOtp);
 
+// Student learning goal & preference onboarding
+router.post(
+  "/save-learning-preferences",
+  authMiddleware,
+  authController.saveLearningPreferences
+);
+
 
 module.exports=router

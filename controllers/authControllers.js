@@ -390,7 +390,14 @@ const loginUser = async (req, res) => {
         success: true,
         message: "Login successful.",
         token,
-        user: { id: user._id, username: user.username, email: user.email, role: user.role, name: user.name },
+        user: { 
+          id: user._id, 
+          username: user.username, 
+          email: user.email, 
+          role: user.role, 
+          name: user.name,
+          onboardingCompleted: user.onboardingCompleted || false
+        },
       };
     })();
 
@@ -466,6 +473,92 @@ const verifyResetOtp = async (req, res) => {
   }
 };
 
+
+// ==================== STUDENT LEARNING GOAL & PREFERENCES ====================
+
+/**
+ * Save / update learning goal and preferences for the logged‑in user.
+ * This is used by the student dashboard onboarding popup (NEET / JEE / Technical / Non‑technical etc.).
+ */
+const saveLearningPreferences = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. User not found in request.",
+      });
+    }
+
+    const {
+      learningGoal,
+      examPreference,
+      preferredSections,
+      studyPreference,
+    } = req.body || {};
+
+    // Basic validation – we at least expect a primary goal
+    if (!learningGoal) {
+      return res.status(400).json({
+        success: false,
+        message: "Learning goal is required.",
+      });
+    }
+
+    const updatePayload = {
+      learningGoal,
+      onboardingCompleted: true,
+    };
+
+    if (typeof examPreference === "string") {
+      updatePayload.examPreference = examPreference;
+    }
+
+    if (Array.isArray(preferredSections)) {
+      updatePayload.preferredSections = preferredSections;
+    }
+
+    if (typeof studyPreference === "string") {
+      updatePayload.studyPreference = studyPreference;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(userId, updatePayload, {
+      new: true,
+    }).lean();
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Learning preferences updated successfully.",
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        mobile: updatedUser.mobile,
+        role: updatedUser.role,
+        isProfileVerified: updatedUser.isProfileVerified,
+        learningGoal: updatedUser.learningGoal,
+        examPreference: updatedUser.examPreference,
+        preferredSections: updatedUser.preferredSections || [],
+        studyPreference: updatedUser.studyPreference,
+        onboardingCompleted: updatedUser.onboardingCompleted,
+      },
+    });
+  } catch (error) {
+    console.error("Error in saveLearningPreferences:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error. Please try again later.",
+    });
+  }
+};
 
 const setPassword = async (req, res) => {
   const { email, newPassword } = req.body;
@@ -572,7 +665,8 @@ const googlelogin = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        isProfileVerified: user.isProfileVerified
+        isProfileVerified: user.isProfileVerified,
+        onboardingCompleted: user.onboardingCompleted || false
       }
     });
 
@@ -1035,7 +1129,8 @@ const verifyLoginOtp = async (req, res) => {
         email: user.email,
         mobile: user.mobile,
         role: user.role,
-        isProfileVerified: user.isProfileVerified
+        isProfileVerified: user.isProfileVerified,
+        onboardingCompleted: user.onboardingCompleted || false
       }
     });
 
@@ -1251,5 +1346,8 @@ module.exports = {
   sendLoginOtp,
   verifyLoginOtp,
   sendSignupOtp,
-  verifySignupOtp
+  verifySignupOtp,
+
+  // Learning goal & preferences
+  saveLearningPreferences,
 }
