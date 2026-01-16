@@ -1505,6 +1505,7 @@ const addQuiz = async (req, res) => {
         
         return {
           questionText: String(q.questionText).trim(),
+          passage: (q.passage !== null && q.passage !== undefined) ? String(q.passage) : '', // Preserve passage formatting (line breaks, paragraphs) - don't trim to maintain formatting
           options: validOptions,
           answer: String(q.answer).trim(),
           imageUrl: (q.imageUrl && String(q.imageUrl).trim()) ? String(q.imageUrl).trim() : '',

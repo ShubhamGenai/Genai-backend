@@ -6,6 +6,7 @@ const QuizSchema = new mongoose.Schema({
   questions: [
     {
       questionText: { type: String, required: true, trim: true },
+      passage: { type: String, default: '' }, // Optional passage for reading comprehension questions (preserves formatting)
       options: [{ type: String, required: true }],
       answer: { type: String, required: true },
       imageUrl: { 
