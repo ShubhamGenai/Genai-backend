@@ -66,6 +66,10 @@ router.post("/generate-question-explanation", authMiddleware, studentController.
 // Get AI career recommendations
 router.get("/getAICareerRecommendations", authMiddleware, studentController.getAICareerRecommendations);
 
+// Library documents (student-facing)
+router.get("/library-documents", studentController.getLibraryDocumentsForStudent);
+router.get("/library-documents/:id", studentController.getLibraryDocumentByIdForStudent);
+
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
 // router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);

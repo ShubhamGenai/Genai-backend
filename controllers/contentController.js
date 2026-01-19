@@ -5,6 +5,8 @@ const Quiz = require("../models/courseModel/quiz");
 const Module = require("../models/courseModel/module");
 const Test = require("../models/testModel/testModel");
 const LibraryDocument = require("../models/libraryModel");
+const LibraryCategory = require("../models/libraryCategoryModel");
+const LibraryClass = require("../models/libraryClassModel");
 const User = require("../models/UserModel");
 const multer = require("multer");
 const path = require("path");
@@ -1664,6 +1666,11 @@ const deleteQuiz = async (req, res) => {
 }
 
 // Configure multer for file uploads
+// For library documents: Use memory storage (for Cloudinary upload)
+// Files are uploaded directly to Cloudinary, no local storage needed
+const libraryStorage = multer.memoryStorage();
+
+// Legacy disk storage (kept for backward compatibility if needed)
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const uploadDir = path.join(__dirname, '../uploads/library');
@@ -1689,7 +1696,17 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+// Multer for library documents - uses memory storage for Cloudinary upload
 const upload = multer({
+  storage: libraryStorage, // Memory storage - files are kept in RAM for Cloudinary upload
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit
+  }
+});
+
+// Legacy disk storage multer (kept for backward compatibility if needed)
+const uploadDisk = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
@@ -1757,18 +1774,27 @@ const CLOUDINARY_FOLDERS = {
   LIBRARY_DOCS: 'library/documents'            // Library document images
 };
 
-// Upload library document
+// Upload library document - Uploads PDF to Cloudinary and saves link to database
 const uploadLibraryDocument = async (req, res) => {
   try {
-    const { name, priceActual, priceDiscounted, class: documentClass, category } = req.body;
+    const { 
+      name, 
+      priceActual, 
+      priceDiscounted, 
+      class: documentClass, 
+      category,
+      description,
+      whatsIncluded,
+      bestFor,
+      prerequisites,
+      support,
+      icon,
+      format
+    } = req.body;
     const file = req.file;
 
     // Validate required fields
     if (!name || !priceActual || !priceDiscounted || !documentClass || !category) {
-      // Delete uploaded file if validation fails
-      if (file) {
-        fs.unlinkSync(file.path);
-      }
       return res.status(400).json({ error: "Name, price (actual and discounted), class, and category are required" });
     }
 
@@ -1776,41 +1802,242 @@ const uploadLibraryDocument = async (req, res) => {
       return res.status(400).json({ error: "PDF file is required" });
     }
 
-    // Construct file URL
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/library/${file.filename}`;
+    // Parse whatsIncluded if it's a JSON string
+    let whatsIncludedArray = [];
+    if (whatsIncluded) {
+      try {
+        whatsIncludedArray = typeof whatsIncluded === 'string' 
+          ? JSON.parse(whatsIncluded) 
+          : Array.isArray(whatsIncluded) 
+            ? whatsIncluded 
+            : [];
+      } catch (e) {
+        // If parsing fails, try splitting by newline
+        whatsIncludedArray = whatsIncluded.split('\n').filter(item => item.trim());
+      }
+    }
 
-    // Create library document
-    const newDocument = new LibraryDocument({
-      name: name.trim(),
-      price: {
-        actual: Number(priceActual),
-        discounted: Number(priceDiscounted)
-      },
-      fileUrl: fileUrl,
-      fileName: file.originalname,
-      fileSize: file.size,
-      class: documentClass.trim(),
-      category: category.trim(),
-      uploadedBy: req.user?.id || null // If you have auth middleware
-    });
+    // Check if Cloudinary is configured
+    const cloudinaryConfigured = 
+      process.env.CLOUDINARY_CLOUD_NAME && 
+      process.env.CLOUDINARY_API_KEY && 
+      process.env.CLOUDINARY_API_SECRET;
 
-    await newDocument.save();
+    if (!cloudinaryConfigured) {
+      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+      return res.status(500).json({ 
+        error: "Cloudinary is not configured. Please set the required environment variables.",
+        details: "PDFs are uploaded directly to Cloudinary. No local storage is used."
+      });
+    }
 
-    res.status(201).json({
-      message: "Library document uploaded successfully",
-      document: newDocument
-    });
+    // Upload PDF directly to Cloudinary (NO local file saving)
+    try {
+      // Convert buffer to base64 data URI for Cloudinary upload
+      const base64Pdf = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      
+      // Upload to Cloudinary with organized folder structure: library/documents
+      const uploadResult = await cloudinary.uploader.upload(base64Pdf, {
+        folder: CLOUDINARY_FOLDERS.LIBRARY_DOCS, // Organized folder: library/documents
+        resource_type: 'raw', // PDF files use 'raw' resource type
+        overwrite: false, // Don't overwrite existing files
+        invalidate: true, // Invalidate CDN cache
+        use_filename: true, // Use original filename
+        unique_filename: true // Add unique suffix to prevent conflicts
+      });
+      
+      console.log('✅ PDF uploaded to Cloudinary successfully');
+      console.log('   URL:', uploadResult.secure_url);
+      console.log('   Public ID:', uploadResult.public_id);
+      console.log('   Size:', uploadResult.bytes, 'bytes');
+
+      // Create library document with Cloudinary URL
+      const newDocument = new LibraryDocument({
+        name: name.trim(),
+        price: {
+          actual: Number(priceActual),
+          discounted: Number(priceDiscounted)
+        },
+        fileUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
+        fileName: file.originalname,
+        fileSize: uploadResult.bytes || file.size,
+        class: documentClass.trim(),
+        category: category.trim(),
+        uploadedBy: req.user?.id || null,
+        description: description ? description.trim() : "",
+        whatsIncluded: whatsIncludedArray,
+        additionalInfo: {
+          bestFor: bestFor ? bestFor.trim() : "",
+          prerequisites: prerequisites ? prerequisites.trim() : "",
+          support: support ? support.trim() : ""
+        },
+        icon: icon ? icon.trim() : "FileText",
+        format: format ? format.trim() : "PDF"
+      });
+
+      await newDocument.save();
+
+      res.status(201).json({
+        success: true,
+        message: "Library document uploaded successfully to Cloudinary",
+        document: newDocument
+      });
+
+    } catch (cloudinaryError) {
+      console.error("❌ Cloudinary upload error:", cloudinaryError);
+      return res.status(500).json({
+        error: "Failed to upload PDF to Cloudinary",
+        details: cloudinaryError.message
+      });
+    }
 
   } catch (error) {
     console.error("Error uploading library document:", error);
-    
-    // Delete uploaded file if there's an error
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
-    }
-
     res.status(400).json({
       error: error.message || "Failed to upload library document"
+    });
+  }
+};
+
+// Add library category
+const addLibraryCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Category name is required" });
+    }
+
+    const categoryName = name.trim();
+    const categoryNameLower = categoryName.toLowerCase();
+
+    // Check if category already exists (case-insensitive)
+    const existingCategory = await LibraryCategory.findOne({ name: categoryNameLower });
+    if (existingCategory) {
+      return res.status(400).json({ error: "Category already exists" });
+    }
+
+    // Create new category
+    const newCategory = new LibraryCategory({
+      name: categoryNameLower,
+      displayName: categoryName, // Store original case for display
+      createdBy: req.user?.id || null
+    });
+
+    await newCategory.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Category added successfully",
+      category: {
+        _id: newCategory._id,
+        name: newCategory.displayName, // Return display name
+        createdAt: newCategory.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error("Error adding library category:", error);
+    res.status(400).json({
+      error: error.message || "Failed to add category"
+    });
+  }
+};
+
+// Get all library categories
+const getLibraryCategories = async (req, res) => {
+  try {
+    const categories = await LibraryCategory.find({ isActive: true })
+      .sort({ displayName: 1 }) // Sort alphabetically by display name
+      .select('_id name displayName createdAt')
+      .lean();
+
+    // Return display names for frontend
+    const formattedCategories = categories.map(cat => ({
+      _id: cat._id,
+      name: cat.displayName, // Return display name
+      createdAt: cat.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      categories: formattedCategories
+    });
+
+  } catch (error) {
+    console.error("Error fetching library categories:", error);
+    res.status(500).json({
+      error: error.message || "Failed to fetch categories"
+    });
+  }
+};
+
+// Add library class (e.g. "Class 11", "Class 12", "Common")
+const addLibraryClass = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Class name is required" });
+    }
+
+    const className = name.trim();
+    const classNameLower = className.toLowerCase();
+
+    // Check if class already exists (case-insensitive)
+    const existingClass = await LibraryClass.findOne({ name: classNameLower });
+    if (existingClass) {
+      return res.status(400).json({ error: "Class already exists" });
+    }
+
+    // Create new class
+    const newClass = new LibraryClass({
+      name: classNameLower,
+      displayName: className,
+      createdBy: req.user?.id || null
+    });
+
+    await newClass.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Class added successfully",
+      classItem: {
+        _id: newClass._id,
+        name: newClass.displayName,
+        createdAt: newClass.createdAt
+      }
+    });
+  } catch (error) {
+    console.error("Error adding library class:", error);
+    res.status(400).json({
+      error: error.message || "Failed to add class"
+    });
+  }
+};
+
+// Get all library classes
+const getLibraryClasses = async (req, res) => {
+  try {
+    const classes = await LibraryClass.find({ isActive: true })
+      .sort({ displayName: 1 })
+      .select("_id name displayName createdAt")
+      .lean();
+
+    const formattedClasses = classes.map((cls) => ({
+      _id: cls._id,
+      name: cls.displayName,
+      createdAt: cls.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      classes: formattedClasses
+    });
+  } catch (error) {
+    console.error("Error fetching library classes:", error);
+    res.status(500).json({
+      error: error.message || "Failed to fetch classes"
     });
   }
 };
@@ -2912,14 +3139,18 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
     deleteCourse,
     uploadLibraryDocument,
     getLibraryDocuments,
+    addLibraryCategory,
+    getLibraryCategories,
+    addLibraryClass,
+    getLibraryClasses,
     getDashboardStats,
     getRecentActivities,
-    upload, // Export multer upload middleware (disk storage)
+    upload, // Export multer upload middleware (library PDFs - memory storage)
     uploadImage, // Export image upload middleware
-    pdfUpload, // Export PDF upload middleware (memory storage)
+    pdfUpload, // Export PDF upload middleware (for parsing)
     uploadQuestionImage,
-  uploadTestImage,
-  getTestImages,
+    uploadTestImage,
+    getTestImages,
     parsePdf,
     generateQuizQuestions
   }

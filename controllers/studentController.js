@@ -2,6 +2,7 @@ const Cart = require("../models/Cart");
 const Course = require("../models/courseModel/courseModel");
 const Test = require("../models/testModel/testModel");
 const Quiz = require("../models/courseModel/quiz");
+const LibraryDocument = require("../models/libraryModel");
 const SubmissionModel = require("../models/testModel/SubmissionModel");
 const paymentSchema = require("../models/paymentSchema");
 const Razorpay = require("razorpay");
@@ -49,6 +50,52 @@ const getCourse = async (req, res) => {
       res.status(500).json({ error: error.message });
     }
   };
+
+// Get all active library documents for students
+const getLibraryDocumentsForStudent = async (req, res) => {
+  try {
+    const docs = await LibraryDocument.find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      documents: docs
+    });
+  } catch (error) {
+    console.error("Error fetching library documents for student:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch library documents"
+    });
+  }
+};
+
+// Get a single library document by id for students
+const getLibraryDocumentByIdForStudent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ success: false, error: "Document id is required" });
+    }
+
+    const doc = await LibraryDocument.findOne({ _id: id, isActive: true }).lean();
+    if (!doc) {
+      return res.status(404).json({ success: false, error: "Library document not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      document: doc
+    });
+  } catch (error) {
+    console.error("Error fetching library document for student:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to fetch library document"
+    });
+  }
+};
 
 
   const getTestCategories = async (req, res) => {
@@ -1924,7 +1971,6 @@ Return ONLY the JSON array, no other text.`;
 
   
   module.exports = {
-   
     getTests,
     getCourseById,
     getTestById,
@@ -1944,10 +1990,8 @@ Return ONLY the JSON array, no other text.`;
     getModulesDetails,
     createCourseOrder,
     verifyCoursePayment,
-
     createCartOrder,
     verifyCartPayment,
-
     getLatestCoursesAndTests,
     getDashboardOverview,
     submitTest,
@@ -1955,5 +1999,7 @@ Return ONLY the JSON array, no other text.`;
     getTestSubmissionDetails,
     aiChat,
     generateQuestionExplanation,
-    getAICareerRecommendations
+    getAICareerRecommendations,
+    getLibraryDocumentsForStudent,
+    getLibraryDocumentByIdForStudent
   };
