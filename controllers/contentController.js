@@ -1505,12 +1505,22 @@ const addQuiz = async (req, res) => {
           .map(opt => String(opt).trim())
           .filter(opt => opt !== '');
         
+        // Handle imagePublicId
+        let imagePublicIdValue = null;
+        if (q.imagePublicId) {
+          const trimmedPublicId = String(q.imagePublicId).trim();
+          if (trimmedPublicId) {
+            imagePublicIdValue = trimmedPublicId;
+          }
+        }
+
         return {
           questionText: String(q.questionText).trim(),
           passage: (q.passage !== null && q.passage !== undefined) ? String(q.passage) : '', // Preserve passage formatting (line breaks, paragraphs) - don't trim to maintain formatting
           options: validOptions,
           answer: String(q.answer).trim(),
           imageUrl: (q.imageUrl && String(q.imageUrl).trim()) ? String(q.imageUrl).trim() : '',
+          imagePublicId: imagePublicIdValue,
           marks: q.marks && !isNaN(parseInt(q.marks)) ? parseInt(q.marks) : 1
         };
       })
@@ -1557,49 +1567,259 @@ const updateQuiz = async (req, res) => {
     const { id } = req.params;
     const { title, duration, questions } = req.body;
 
+    // Log the full request body for debugging
+    console.log(`[Update Quiz] ========== UPDATE QUIZ REQUEST ==========`,req.body);
+    // console.log(`[Update Quiz] Quiz ID: ${id}`);
+    // console.log(`[Update Quiz] Request Body:`, JSON.stringify(req.body, null, 2));
+    // console.log(`[Update Quiz] Title: ${title}`);
+    // console.log(`[Update Quiz] Duration: ${duration}`);
+    // console.log(`[Update Quiz] Questions Count: ${questions?.length || 0}`);
+    
+      // Log each question's key fields - FOCUS ON IMAGE URL AND PUBLIC ID
+      if (questions && Array.isArray(questions)) {
+        questions.forEach((q, index) => {
+          console.log(`[Update Quiz] Question ${index + 1} RECEIVED FROM FRONTEND:`, {
+            _id: q._id || 'NEW',
+            questionText: q.questionText?.substring(0, 50) + '...',
+            'imageUrl EXISTS': 'imageUrl' in q,
+            'imageUrl VALUE': q.imageUrl || 'EMPTY/NULL',
+            'imageUrl TYPE': typeof q.imageUrl,
+            'imageUrl LENGTH': q.imageUrl ? q.imageUrl.length : 0,
+            'imagePublicId EXISTS': 'imagePublicId' in q,
+            'imagePublicId VALUE': q.imagePublicId || 'NULL',
+            'imagePublicId TYPE': typeof q.imagePublicId,
+            'imagePublicId LENGTH': q.imagePublicId ? q.imagePublicId.length : 0,
+            'FULL QUESTION': JSON.stringify(q, null, 2)
+          });
+        });
+      }
+    console.log(`[Update Quiz] =========================================`);
+
+    // Validate quiz ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
+      console.error(`[Update Quiz] Invalid quiz ID: ${id}`);
       return res.status(400).json({ error: "Invalid quiz ID" });
     }
 
+    // Check if quiz exists
     const quiz = await Quiz.findById(id);
     if (!quiz) {
+      console.error(`[Update Quiz] Quiz not found: ${id}`);
       return res.status(404).json({ error: "Quiz not found" });
     }
 
     // Validate required fields
-    if (!title || !questions || questions.length === 0) {
-      return res.status(400).json({ 
-        error: "Title and at least one question are required" 
-      });
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      return res.status(400).json({ error: "Quiz title is required" });
     }
 
-    // Update the quiz
+    if (!questions || !Array.isArray(questions)) {
+      return res.status(400).json({ error: "Questions must be an array" });
+    }
+
+    if (questions.length === 0) {
+      return res.status(400).json({ error: "At least one question is required" });
+    }
+
+    // Validate duration
+    if (duration !== undefined && duration !== null) {
+      const durationNum = parseInt(duration);
+      if (isNaN(durationNum) || durationNum < 1) {
+        return res.status(400).json({ error: "Duration must be a positive number (minutes)" });
+      }
+    }
+
+    // Validate each question (same rules as addQuiz)
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+
+      // Validate question text
+      if (!q.questionText || typeof q.questionText !== 'string' || String(q.questionText).trim() === '') {
+        return res.status(400).json({ error: `Question ${i + 1}: Question text is required.` });
+      }
+
+      // Validate options
+      if (!q.options || !Array.isArray(q.options)) {
+        return res.status(400).json({ error: `Question ${i + 1}: Options must be an array.` });
+      }
+
+      // Filter and trim options first (same logic as when creating)
+      const validOptions = q.options
+        .map(opt => String(opt).trim())
+        .filter(opt => opt !== '');
+
+      if (validOptions.length < 2) {
+        return res.status(400).json({ error: `Question ${i + 1}: At least 2 valid options are required.` });
+      }
+
+      // Validate answer
+      if (!q.answer || typeof q.answer !== 'string' || String(q.answer).trim() === '') {
+        return res.status(400).json({ error: `Question ${i + 1}: Correct answer is required.` });
+      }
+
+      const trimmedAnswer = String(q.answer).trim();
+      if (!validOptions.includes(trimmedAnswer)) {
+        return res.status(400).json({
+          error: `Question ${i + 1}: Answer "${trimmedAnswer}" must match one of the options: ${validOptions.join(', ')}`
+        });
+      }
+    }
+
+    // Sanitize / normalize questions before updating (match addQuiz behavior)
+    const sanitizedQuestions = questions.map((q, index) => {
+      const validOptions = q.options
+        .map(opt => String(opt).trim())
+        .filter(opt => opt !== '');
+
+      // Handle imageUrl - ensure it's either empty string or valid URL
+      let imageUrlValue = '';
+      if (q.imageUrl !== null && q.imageUrl !== undefined && q.imageUrl !== '') {
+        const trimmedUrl = String(q.imageUrl).trim();
+        // Only set if it's a valid URL format (Cloudinary URLs are https://)
+        if (trimmedUrl && /^https?:\/\/.+/.test(trimmedUrl)) {
+          imageUrlValue = trimmedUrl;
+          console.log(`[Update Quiz] Question ${index + 1}: Valid imageUrl found: ${trimmedUrl.substring(0, 50)}...`);
+        } else if (trimmedUrl) {
+          console.warn(`[Update Quiz] Question ${index + 1}: Invalid imageUrl format, setting to empty: ${trimmedUrl}`);
+        }
+      }
+
+      // Handle imagePublicId - ALWAYS preserve if provided from frontend
+      // Frontend sends imagePublicId when image is uploaded, so preserve it
+      let imagePublicIdValue = null;
+      if (q.imagePublicId !== null && q.imagePublicId !== undefined && q.imagePublicId !== '') {
+        const trimmedPublicId = String(q.imagePublicId).trim();
+        if (trimmedPublicId) {
+          imagePublicIdValue = trimmedPublicId;
+          console.log(`[Update Quiz] Question ${index + 1}: imagePublicId preserved: ${trimmedPublicId}`);
+        }
+      }
+      
+      // Note: We preserve imagePublicId even if imageUrl is empty
+      // This allows frontend to send both fields independently
+      // Backend will store what frontend sends
+
+      const sanitizedQuestion = {
+        questionText: String(q.questionText).trim(),
+        passage: (q.passage !== null && q.passage !== undefined) ? String(q.passage) : '',
+        options: validOptions,
+        answer: String(q.answer).trim(),
+        imageUrl: imageUrlValue || '', // Always include (empty string if none) - REQUIRED by schema
+        imagePublicId: imagePublicIdValue || null, // Always include (null if none) - REQUIRED by schema
+        marks: q.marks && !isNaN(parseInt(q.marks)) ? parseInt(q.marks) : 1
+      };
+      
+      // CRITICAL: Ensure imageUrl and imagePublicId are explicitly set (never undefined)
+      // Mongoose schema expects these fields, so they must be present
+      if (sanitizedQuestion.imageUrl === undefined) sanitizedQuestion.imageUrl = '';
+      if (sanitizedQuestion.imagePublicId === undefined) sanitizedQuestion.imagePublicId = null;
+
+      // Only include _id if it's a valid MongoDB ObjectId (for existing questions)
+      // This allows Mongoose to update existing subdocuments or create new ones
+      if (q._id && mongoose.Types.ObjectId.isValid(q._id)) {
+        sanitizedQuestion._id = q._id;
+      }
+
+      // Log the sanitized question for debugging
+      console.log(`[Update Quiz] Question ${index + 1} sanitized:`, {
+        _id: sanitizedQuestion._id || 'NEW',
+        hasImageUrl: !!sanitizedQuestion.imageUrl,
+        imageUrl: sanitizedQuestion.imageUrl ? sanitizedQuestion.imageUrl.substring(0, 50) + '...' : 'EMPTY',
+        hasImagePublicId: !!sanitizedQuestion.imagePublicId,
+        imagePublicId: sanitizedQuestion.imagePublicId || 'NULL'
+      });
+
+      return sanitizedQuestion;
+    });
+
+    console.log(`[Update Quiz] Sanitized ${sanitizedQuestions.length} questions`);
+
+    // Prepare update data - explicitly set all fields including nested ones
+    const updateData = {
+      title: title.trim(),
+      duration: duration ? parseInt(duration) : undefined,
+      questions: sanitizedQuestions,
+      updatedAt: Date.now() // Explicitly update timestamp
+    };
+
+    console.log(`[Update Quiz] Updating with ${sanitizedQuestions.length} questions`);
+    console.log(`[Update Quiz] Sample question fields:`, {
+      imageUrl: sanitizedQuestions[0]?.imageUrl ? 'PRESENT' : 'EMPTY',
+      imagePublicId: sanitizedQuestions[0]?.imagePublicId ? 'PRESENT' : 'NULL'
+    });
+
+    // Use findByIdAndUpdate - Mongoose will replace the entire questions array
+    // This ensures all nested fields (including imageUrl and imagePublicId) are saved
     const updatedQuiz = await Quiz.findByIdAndUpdate(
       id,
-      {
-        title: title.trim(),
-        duration: duration ? parseInt(duration) : undefined,
-        questions: questions
+      { 
+        $set: {
+          title: updateData.title,
+          duration: updateData.duration,
+          questions: updateData.questions,
+          updatedAt: updateData.updatedAt
+        }
       },
       { new: true, runValidators: true }
     );
 
-    res.status(200).json({ 
-      message: "Quiz updated successfully", 
-      quiz: updatedQuiz 
-    });
-  } catch (error) {
-    console.error("Error updating quiz:", error.message);
+    if (!updatedQuiz) {
+      console.error(`[Update Quiz] Quiz not found after update: ${id}`);
+      return res.status(404).json({ error: "Quiz not found after update" });
+    }
+
+    // Verify the update worked
+    console.log(`[Update Quiz] Successfully updated quiz: ${id}`);
+    console.log(`[Update Quiz] Updated quiz has ${updatedQuiz.questions?.length || 0} questions`);
     
-    if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({ 
-        error: "Validation failed", 
-        details: validationErrors 
+    // Log verification of imageUrl and imagePublicId in updated quiz
+    if (updatedQuiz.questions && updatedQuiz.questions.length > 0) {
+      updatedQuiz.questions.forEach((q, idx) => {
+        console.log(`[Update Quiz] Updated Question ${idx + 1}:`, {
+          imageUrl: q.imageUrl ? 'SAVED' : 'EMPTY',
+          imagePublicId: q.imagePublicId ? 'SAVED' : 'NULL'
+        });
       });
     }
 
-    res.status(400).json({ error: error.message });
+    res.status(200).json({
+      success: true,
+      message: "Quiz updated successfully",
+      quiz: updatedQuiz
+    });
+  } catch (error) {
+    console.error("[Update Quiz] Error updating quiz:", error);
+    console.error("[Update Quiz] Error name:", error.name);
+    console.error("[Update Quiz] Error message:", error.message);
+    if (error.stack) {
+      console.error("[Update Quiz] Error stack:", error.stack);
+    }
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      console.error("[Update Quiz] Validation errors:", validationErrors);
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validationErrors
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId, etc.)
+    if (error.name === 'CastError') {
+      console.error("[Update Quiz] Cast error:", error.message);
+      return res.status(400).json({
+        error: "Invalid data format",
+        details: error.message
+      });
+    }
+
+    // Return 500 for server errors, 400 for client errors
+    const statusCode = error.name === 'CastError' || error.name === 'ValidationError' ? 400 : 500;
+    return res.status(statusCode).json({ 
+      error: error.message || "Failed to update quiz",
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
