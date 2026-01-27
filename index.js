@@ -68,8 +68,12 @@ app.use(cors({
 // Middleware
 app.use(helmet());
 app.use(compression());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Increase JSON and URL-encoded body size limits to handle large quizzes/passages
+// Default is 100kb which can cause "Entity too large" errors on big payloads
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
 app.use(morgan("dev"));
 
 // Database connection

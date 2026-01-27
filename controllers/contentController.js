@@ -1655,17 +1655,23 @@ const updateQuiz = async (req, res) => {
       return res.status(404).json({ error: "Quiz not found" });
     }
 
-    // Validate required fields
-    if (!title || typeof title !== 'string' || title.trim() === '') {
-      return res.status(400).json({ error: "Quiz title is required" });
+    // Validate required fields (support partial updates)
+    // Title: required only if provided; if omitted, keep existing title
+    if (title !== undefined && title !== null) {
+      if (typeof title !== 'string' || title.trim() === '') {
+        return res.status(400).json({ error: "Quiz title is required" });
+      }
     }
 
-    if (!questions || !Array.isArray(questions)) {
-      return res.status(400).json({ error: "Questions must be an array" });
-    }
+    // Questions: validate only if provided; if omitted, keep existing questions
+    if (questions !== undefined) {
+      if (!Array.isArray(questions)) {
+        return res.status(400).json({ error: "Questions must be an array" });
+      }
 
-    if (questions.length === 0) {
-      return res.status(400).json({ error: "At least one question is required" });
+      if (questions.length === 0) {
+        return res.status(400).json({ error: "At least one question is required" });
+      }
     }
 
     // Validate duration
@@ -1676,9 +1682,10 @@ const updateQuiz = async (req, res) => {
       }
     }
 
-    // Validate each question (same rules as addQuiz)
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
+    // Validate each question (same rules as addQuiz) - only when questions are provided
+    if (questions && Array.isArray(questions)) {
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
 
       // Validate question text
       if (!q.questionText || typeof q.questionText !== 'string' || String(q.questionText).trim() === '') {
@@ -1704,19 +1711,22 @@ const updateQuiz = async (req, res) => {
         return res.status(400).json({ error: `Question ${i + 1}: Correct answer is required.` });
       }
 
-      const trimmedAnswer = String(q.answer).trim();
-      if (!validOptions.includes(trimmedAnswer)) {
-        return res.status(400).json({
-          error: `Question ${i + 1}: Answer "${trimmedAnswer}" must match one of the options: ${validOptions.join(', ')}`
-        });
+        const trimmedAnswer = String(q.answer).trim();
+        if (!validOptions.includes(trimmedAnswer)) {
+          return res.status(400).json({
+            error: `Question ${i + 1}: Answer "${trimmedAnswer}" must match one of the options: ${validOptions.join(', ')}`
+          });
+        }
       }
     }
 
     // Sanitize / normalize questions before updating (match addQuiz behavior)
-    const sanitizedQuestions = questions.map((q, index) => {
-      const validOptions = q.options
-        .map(opt => String(opt).trim())
-        .filter(opt => opt !== '');
+    let sanitizedQuestions = null;
+    if (questions && Array.isArray(questions)) {
+      sanitizedQuestions = questions.map((q, index) => {
+        const validOptions = q.options
+          .map(opt => String(opt).trim())
+          .filter(opt => opt !== '');
 
       // Handle imageUrl - ensure it's either empty string or valid URL
       let imageUrlValue = '';
@@ -1776,37 +1786,42 @@ const updateQuiz = async (req, res) => {
         imagePublicId: sanitizedQuestion.imagePublicId || 'NULL'
       });
 
-      return sanitizedQuestion;
-    });
+        return sanitizedQuestion;
+      });
 
-    console.log(`[Update Quiz] Sanitized ${sanitizedQuestions.length} questions`);
+      console.log(`[Update Quiz] Sanitized ${sanitizedQuestions.length} questions`);
+    }
 
-    // Prepare update data - explicitly set all fields including nested ones
-    const updateData = {
-      title: title.trim(),
-      duration: duration ? parseInt(duration) : undefined,
-      questions: sanitizedQuestions,
-      updatedAt: Date.now() // Explicitly update timestamp
+    // Prepare update data - explicitly set only provided fields
+    const updateFields = {
+      updatedAt: Date.now() // Always update timestamp
     };
 
-    console.log(`[Update Quiz] Updating with ${sanitizedQuestions.length} questions`);
-    console.log(`[Update Quiz] Sample question fields:`, {
-      imageUrl: sanitizedQuestions[0]?.imageUrl ? 'PRESENT' : 'EMPTY',
-      imagePublicId: sanitizedQuestions[0]?.imagePublicId ? 'PRESENT' : 'NULL'
-    });
+    if (title !== undefined && title !== null) {
+      updateFields.title = title.trim();
+    }
 
-    // Use findByIdAndUpdate - Mongoose will replace the entire questions array
-    // This ensures all nested fields (including imageUrl and imagePublicId) are saved
+    if (duration !== undefined && duration !== null) {
+      updateFields.duration = parseInt(duration);
+    }
+
+    if (sanitizedQuestions) {
+      updateFields.questions = sanitizedQuestions;
+    }
+
+    console.log(`[Update Quiz] Updating quiz with fields:`, Object.keys(updateFields));
+    if (sanitizedQuestions) {
+      console.log(`[Update Quiz] Updating with ${sanitizedQuestions.length} questions`);
+      console.log(`[Update Quiz] Sample question fields:`, {
+        imageUrl: sanitizedQuestions[0]?.imageUrl ? 'PRESENT' : 'EMPTY',
+        imagePublicId: sanitizedQuestions[0]?.imagePublicId ? 'PRESENT' : 'NULL'
+      });
+    }
+
+    // Use findByIdAndUpdate - only update provided fields
     const updatedQuiz = await Quiz.findByIdAndUpdate(
       id,
-      { 
-        $set: {
-          title: updateData.title,
-          duration: updateData.duration,
-          questions: updateData.questions,
-          updatedAt: updateData.updatedAt
-        }
-      },
+      { $set: updateFields },
       { new: true, runValidators: true }
     );
 
