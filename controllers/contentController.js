@@ -1561,6 +1561,53 @@ const getQuiz = async (req, res) => {
   }
 };
 
+// Update ONLY the passage field of a single quiz question
+// This avoids sending the entire quiz + all questions for every small text change
+const updateQuestionPassage = async (req, res) => {
+  try {
+    const { quizId, questionId } = req.params;
+    const { passage } = req.body;
+
+    if (!quizId || !questionId) {
+      return res.status(400).json({ error: "quizId and questionId are required" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({ error: "Invalid quiz ID" });
+    }
+
+    // Fetch quiz
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) {
+      return res.status(404).json({ error: "Quiz not found" });
+    }
+
+    // questions is an array of subdocuments – use Mongoose helper
+    const question = quiz.questions.id(questionId);
+    if (!question) {
+      return res.status(404).json({ error: "Question not found in this quiz" });
+    }
+
+    // Update only passage; keep other fields untouched
+    question.passage = typeof passage === "string" ? passage : "";
+
+    await quiz.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Passage updated successfully",
+      quizId,
+      questionId,
+      passage: question.passage,
+    });
+  } catch (error) {
+    console.error("[updateQuestionPassage] Error updating passage:", error);
+    return res.status(500).json({
+      error: "Failed to update question passage",
+    });
+  }
+};
+
 // Update quiz
 const updateQuiz = async (req, res) => {
   try {
@@ -3372,5 +3419,6 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
     uploadTestImage,
     getTestImages,
     parsePdf,
-    generateQuizQuestions
+    generateQuizQuestions,
+    updateQuestionPassage
   }

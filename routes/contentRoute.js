@@ -40,5 +40,8 @@ router.post("/upload-test-image", contentController.uploadImage.single('imageFil
 router.post("/parse-pdf", contentController.pdfUpload.single('pdfFile'), contentController.parsePdf)
 router.post("/generate-quiz-questions", contentController.generateQuizQuestions)
 
+// Update ONLY passage of a single quiz question
+router.patch("/quiz/:quizId/question/:questionId/passage", contentController.updateQuestionPassage)
+
 
 module.exports =  router;
