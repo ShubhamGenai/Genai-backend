@@ -612,14 +612,15 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
       }
 
       // Verify test is free
-      const isTestFree = test.isFree === true || 
-                        (test.price?.actual === 0 && test.price?.discounted === 0) ||
-                        (!test.price?.actual && !test.price?.discounted);
-      
+      const isTestFree =
+        test.isFree === true ||
+        (test.price?.actual === 0 && test.price?.discounted === 0) ||
+        (!test.price?.actual && !test.price?.discounted);
+
       if (!isTestFree) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "This test is not free. Please use the payment flow to enroll." 
+        return res.status(400).json({
+          success: false,
+          message: "This test is not free. Please use the payment flow to enroll."
         });
       }
 
@@ -629,35 +630,54 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
         return res.status(404).json({ success: false, message: "Student not found" });
       }
 
-      const studentId = student._id;
+      // Normalize IDs for safe comparison
+      const testIdStr = String(testId);
+      const userIdStr = String(userId);
 
-      if (student.enrolledTests.includes(testId)) {
-        return res.json({ 
-          success: true, 
+      // Check if student is already enrolled in this test
+      const alreadyInStudent = (student.enrolledTests || []).some(
+        (t) => String(t) === testIdStr
+      );
+
+      if (alreadyInStudent) {
+        return res.json({
+          success: true,
           message: "You are already enrolled in this test",
           alreadyEnrolled: true
         });
       }
 
-      // Enroll student to test
+      // Enroll student in the test at Student model level (stores Test ObjectIds)
       student.enrolledTests.push(testId);
       await student.save();
 
-      // Update the Test model to store student ID
-      if (!test.enrolledStudents.includes(studentId)) {
-        test.enrolledStudents.push(studentId);
+      // Test.enrolledStudents stores User IDs (see testModel.js ref: "user")
+      const alreadyInTest = (test.enrolledStudents || []).some(
+        (u) => String(u) === userIdStr
+      );
+
+      if (!alreadyInTest) {
+        test.enrolledStudents.push(userId);
         await test.save();
       }
 
-      // Create EnrolledTest record
-      await EnrolledTest.create({
+      // Ensure EnrolledTest record exists (avoid duplicates)
+      const studentId = student._id;
+      const existingEnrolledTest = await EnrolledTest.findOne({
         studentId,
-        testId,
-        paymentStatus: "free", // Mark as free enrollment
+        testId
       });
 
-      res.json({ 
-        success: true, 
+      if (!existingEnrolledTest) {
+        await EnrolledTest.create({
+          studentId,
+          testId,
+          paymentStatus: "free", // Mark as free enrollment
+        });
+      }
+
+      res.json({
+        success: true,
         message: "Successfully enrolled in free test",
         test: {
           _id: test._id,
@@ -665,13 +685,12 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
           isFree: test.isFree
         }
       });
-
     } catch (err) {
       console.error("Error enrolling in free test:", err);
-      res.status(500).json({ 
-        success: false, 
-        message: "Error enrolling in test", 
-        error: err.message 
+      res.status(500).json({
+        success: false,
+        message: "Error enrolling in test",
+        error: err.message
       });
     }
   };
