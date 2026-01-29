@@ -1983,7 +1983,7 @@ const upload = multer({
   storage: libraryStorage, // Memory storage - files are kept in RAM for Cloudinary upload
   fileFilter: fileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB limit
+    fileSize: 10 * 1024 * 1024 // 10MB - matches Cloudinary free-tier limit
   }
 });
 
@@ -2056,6 +2056,9 @@ const CLOUDINARY_FOLDERS = {
   LIBRARY_DOCS: 'library/documents'            // Library document images
 };
 
+// Cloudinary free-tier file size limit (10 MB) - larger files need a paid plan
+const CLOUDINARY_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
 // Upload library document - Uploads PDF to Cloudinary and saves link to database
 const uploadLibraryDocument = async (req, res) => {
   try {
@@ -2082,6 +2085,14 @@ const uploadLibraryDocument = async (req, res) => {
 
     if (!file) {
       return res.status(400).json({ error: "PDF file is required" });
+    }
+
+    if (file.size > CLOUDINARY_MAX_FILE_BYTES) {
+      const maxMb = CLOUDINARY_MAX_FILE_BYTES / (1024 * 1024);
+      return res.status(400).json({
+        error: "File is too large",
+        details: `Maximum size is ${maxMb} MB (Cloudinary limit). Your file is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Use a smaller file or upgrade your Cloudinary plan for higher limits.`
+      });
     }
 
     // Parse whatsIncluded if it's a JSON string
@@ -2119,13 +2130,15 @@ const uploadLibraryDocument = async (req, res) => {
       const base64Pdf = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
       
       // Upload to Cloudinary with organized folder structure: library/documents
+      // timeout: 5 min (300000 ms) for large PDFs - default is ~60s which can cause TimeoutError
       const uploadResult = await cloudinary.uploader.upload(base64Pdf, {
         folder: CLOUDINARY_FOLDERS.LIBRARY_DOCS, // Organized folder: library/documents
         resource_type: 'raw', // PDF files use 'raw' resource type
         overwrite: false, // Don't overwrite existing files
         invalidate: true, // Invalidate CDN cache
         use_filename: true, // Use original filename
-        unique_filename: true // Add unique suffix to prevent conflicts
+        unique_filename: true, // Add unique suffix to prevent conflicts
+        timeout: 300000 // 5 minutes - large PDFs can take longer than default 60s
       });
       
       console.log('✅ PDF uploaded to Cloudinary successfully');

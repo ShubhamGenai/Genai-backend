@@ -26,6 +26,11 @@ const errorHandler = (err, req, res, next) => {
     error = new CustomError('Token expired', 401);
   }
 
+  // Handle Multer file size limit (e.g. library PDF max 10 MB)
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    error = new CustomError('File is too large. Maximum size is 10 MB (Cloudinary limit). Use a smaller file or upgrade your Cloudinary plan.', 400);
+  }
+
   // Handle any other errors
   const statusCode = error.statusCode || 500;
   const message = error.message || 'Server Error';
