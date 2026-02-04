@@ -45,12 +45,15 @@ dotenv.config();
 // Initialize Express app
 const app = express();
 
-// CORS Configuration
-const allowedOrigins = [
-  "https://genai-frontend-xi.vercel.app",
-  "https://www.genailearning.in",
-  "http://localhost:5173",
+// CORS Configuration – add DigitalOcean/other origins via CORS_ORIGINS (comma-separated)
+const baseOrigins = [
+  "https://genailearning.in",
+    "https://www.genailearning.in"
 ];
+const extraOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+  : [];
+const allowedOrigins = [...baseOrigins, ...extraOrigins];
 
 app.use(cors({
   origin: function (origin, callback) {
