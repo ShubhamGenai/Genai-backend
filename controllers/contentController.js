@@ -11,7 +11,10 @@ const User = require("../models/UserModel");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const cloudinary = require("cloudinary").v2;
+const { Transform } = require("stream");
+const Busboy = require("busboy");
+const spacesStorage = require("../utils/spacesStorage");
+const uploadProgress = require("../utils/uploadProgress");
 const Anthropic = require("@anthropic-ai/sdk");
 const pdfParse = require("pdf-parse");
 const { fromBuffer } = require("pdf2pic");
@@ -1122,8 +1125,8 @@ const addTest = async (req, res) => {
       certificate,
       quizzes,
       passingScore,
-      image, // Test image URL from Cloudinary
-      imagePublicId, // Test image public ID from Cloudinary
+      image, // Test image URL (from Spaces upload)
+      imagePublicId, // Object key from storage (for future management)
       ratings = [], // optional: handle if ratings are not provided
       isFree = false
     } = req.body;
@@ -1192,7 +1195,7 @@ const addTest = async (req, res) => {
       },
       isFree: isTestFree,
       image: image || undefined, // Use provided image URL or default from schema
-      imagePublicId: imagePublicId || undefined, // Store Cloudinary public ID if provided
+      imagePublicId: imagePublicId || undefined, // Store storage object key if provided
       category: category || undefined,
       level,
       features: features || [],
@@ -1732,7 +1735,7 @@ const updateQuiz = async (req, res) => {
       let imageUrlValue = '';
       if (q.imageUrl !== null && q.imageUrl !== undefined && q.imageUrl !== '') {
         const trimmedUrl = String(q.imageUrl).trim();
-        // Only set if it's a valid URL format (Cloudinary URLs are https://)
+        // Only set if it's a valid URL format (e.g. Spaces/CDN URLs are https://)
         if (trimmedUrl && /^https?:\/\/.+/.test(trimmedUrl)) {
           imageUrlValue = trimmedUrl;
           console.log(`[Update Quiz] Question ${index + 1}: Valid imageUrl found: ${trimmedUrl.substring(0, 50)}...`);
@@ -1947,10 +1950,32 @@ const deleteQuiz = async (req, res) => {
   }
 }
 
-// Configure multer for file uploads
-// For library documents: Use memory storage (for Cloudinary upload)
-// Files are uploaded directly to Cloudinary, no local storage needed
-const libraryStorage = multer.memoryStorage();
+// Custom storage: buffer in memory and report progress when X-Upload-ID is present
+const libraryStorageWithProgress = {
+  _handleFile(req, file, cb) {
+    const uploadId = req.headers["x-upload-id"];
+    const total = parseInt(req.headers["content-length"], 10) || 0;
+    const chunks = [];
+    let received = 0;
+    file.stream.on("data", (chunk) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (uploadId && total > 0) {
+        const pct = Math.min(89, Math.round((received / total) * 90));
+        uploadProgress.setProgress(uploadId, pct, "receiving");
+      }
+    });
+    file.stream.on("end", () => {
+      const buffer = Buffer.concat(chunks);
+      if (uploadId) uploadProgress.setProgress(uploadId, 90, "processing");
+      cb(null, { buffer, size: buffer.length });
+    });
+    file.stream.on("error", (err) => cb(err));
+  },
+  _removeFile(req, file, cb) {
+    cb(null);
+  },
+};
 
 // Legacy disk storage (kept for backward compatibility if needed)
 const storage = multer.diskStorage({
@@ -1978,12 +2003,12 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Multer for library documents - uses memory storage for Cloudinary upload
+// Multer for library documents - uses custom storage that reports progress to frontend via SSE
 const upload = multer({
-  storage: libraryStorage, // Memory storage - files are kept in RAM for Cloudinary upload
+  storage: libraryStorageWithProgress,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB - matches Cloudinary free-tier limit
+    fileSize: 100 * 1024 * 1024 // 100MB
   }
 });
 
@@ -1992,7 +2017,7 @@ const uploadDisk = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB limit
+    fileSize: 100 * 1024 * 1024 // 100MB limit
   }
 });
 
@@ -2007,13 +2032,13 @@ const imageFilter = (req, file, cb) => {
 };
 
 // Multer storage for images (memory storage only - no local files saved)
-// Images are uploaded directly to Cloudinary, no local storage used
+// Images are uploaded directly to DigitalOcean Spaces, no local storage used
 const imageStorage = multer.memoryStorage();
 const uploadImage = multer({
   storage: imageStorage, // Memory storage - files are kept in RAM, not saved to disk
   fileFilter: imageFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit for images
+    fileSize: 100 * 1024 * 1024 // 100MB limit for images
   }
 });
 
@@ -2023,43 +2048,176 @@ const pdfUpload = multer({
   storage: pdfMemoryStorage, // Memory storage - files are kept in RAM, not saved to disk
   fileFilter: fileFilter, // Use the same PDF file filter
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB limit for PDFs
+    fileSize: 100 * 1024 * 1024 // 100MB limit for PDFs
   }
 });
 
-// Configure Cloudinary
-const configureCloudinary = () => {
-  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET
+// DigitalOcean Spaces folder structure (used as key prefixes)
+const SPACES_FOLDERS = spacesStorage.FOLDERS;
+const SPACES_MAX_FILE_BYTES = spacesStorage.MAX_FILE_BYTES;
+
+/**
+ * Streaming library document upload: streams file from client to Spaces while receiving.
+ * Uses concurrent multipart upload for much faster large files (e.g. 40MB).
+ * No full buffering on server = lower memory and overlapping send/receive.
+ */
+const streamUploadLibraryDocument = (req, res) => {
+  const uploadId = req.headers["x-upload-id"];
+  const contentLength = parseInt(req.headers["content-length"], 10) || 0;
+
+  if (!spacesStorage.isConfigured()) {
+    return res.status(500).json({
+      error: "DigitalOcean Spaces is not configured.",
+      details: "Set DO_SPACES_KEY, DO_SPACES_SECRET, and DO_SPACES_BUCKET.",
     });
-    console.log('Cloudinary configured successfully');
-    return true;
-  } else {
-    console.warn('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your .env file');
-    return false;
   }
+
+  const fields = {};
+  let uploadPromise = null;
+  let countingStream = null;
+  let fileOriginalName = "document.pdf";
+  let fileRejected = null;
+
+  const busboy = Busboy({
+    headers: req.headers,
+    limits: { fileSize: SPACES_MAX_FILE_BYTES },
+  });
+
+  busboy.on("field", (name, value) => {
+    fields[name] = value;
+  });
+
+  busboy.on("file", (fieldname, fileStream, info) => {
+    if (fieldname !== "pdfFile") {
+      fileStream.resume();
+      return;
+    }
+    const mimeType = (info.mimeType || "").toLowerCase();
+    if (mimeType !== "application/pdf") {
+      fileRejected = "Only PDF files are allowed";
+      fileStream.resume();
+      return;
+    }
+
+    fileOriginalName = info.filename || "document.pdf";
+    countingStream = new Transform({
+      transform(chunk, enc, cb) {
+        this.bytesReceived = (this.bytesReceived || 0) + chunk.length;
+        if (uploadId && contentLength > 0) {
+          const pct = Math.min(89, Math.round((this.bytesReceived / contentLength) * 90));
+          uploadProgress.setProgress(uploadId, pct, "receiving");
+        }
+        if (this.bytesReceived > SPACES_MAX_FILE_BYTES) {
+          cb(new Error("File too large"));
+          return;
+        }
+        cb(null, chunk);
+      },
+    });
+    fileStream.pipe(countingStream);
+    uploadPromise = spacesStorage.uploadStream(
+      countingStream,
+      mimeType,
+      SPACES_FOLDERS.LIBRARY_DOCS,
+      fileOriginalName
+    );
+  });
+
+  busboy.on("finish", async () => {
+    try {
+      if (fileRejected) {
+        if (uploadId) uploadProgress.clearProgress(uploadId);
+        return res.status(400).json({ error: fileRejected });
+      }
+      if (!uploadPromise) {
+        if (uploadId) uploadProgress.clearProgress(uploadId);
+        return res.status(400).json({ error: "PDF file is required" });
+      }
+
+      if (uploadId) uploadProgress.setProgress(uploadId, 90, "uploading");
+
+      const { url, key } = await uploadPromise;
+      const bytes = countingStream ? (countingStream.bytesReceived || 0) : 0;
+
+      const name = (fields.name || "").trim();
+      const priceActual = fields.priceActual != null ? fields.priceActual : "";
+      const priceDiscounted = fields.priceDiscounted != null ? fields.priceDiscounted : "";
+      const documentClass = (fields.class || "").trim();
+      const category = (fields.category || "").trim();
+      if (!name || !priceActual || !priceDiscounted || !documentClass || !category) {
+        if (uploadId) uploadProgress.clearProgress(uploadId);
+        return res.status(400).json({
+          error: "Name, price (actual and discounted), class, and category are required",
+        });
+      }
+
+      let whatsIncludedArray = [];
+      const whatsIncluded = fields.whatsIncluded;
+      if (whatsIncluded) {
+        try {
+          whatsIncludedArray = typeof whatsIncluded === "string"
+            ? JSON.parse(whatsIncluded)
+            : Array.isArray(whatsIncluded)
+              ? whatsIncluded
+              : [];
+        } catch (e) {
+          whatsIncludedArray = String(whatsIncluded).split("\n").filter((item) => item.trim());
+        }
+      }
+
+      const newDocument = new LibraryDocument({
+        name,
+        price: { actual: Number(priceActual), discounted: Number(priceDiscounted) },
+        fileUrl: url,
+        fileName: fileOriginalName,
+        fileSize: bytes,
+        class: documentClass,
+        category,
+        uploadedBy: req.user?.id || null,
+        description: (fields.description || "").trim(),
+        whatsIncluded: whatsIncludedArray,
+        additionalInfo: {
+          bestFor: (fields.bestFor || "").trim(),
+          prerequisites: (fields.prerequisites || "").trim(),
+          support: (fields.support || "").trim(),
+        },
+        icon: (fields.icon || "FileText").trim(),
+        format: (fields.format || "PDF").trim(),
+      });
+      await newDocument.save();
+
+      if (uploadId) {
+        uploadProgress.setProgress(uploadId, 100, "done");
+        uploadProgress.clearProgress(uploadId);
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Library document uploaded successfully",
+        document: newDocument,
+      });
+    } catch (err) {
+      if (uploadId) uploadProgress.clearProgress(uploadId);
+      console.error("Stream upload error:", err);
+      res.status(err.message === "File too large" ? 400 : 500).json({
+        error: err.message === "File too large" ? "File is too large" : "Failed to upload PDF",
+        details: err.message,
+      });
+    }
+  });
+
+  busboy.on("error", (err) => {
+    if (uploadId) uploadProgress.clearProgress(uploadId);
+    console.error("Busboy error:", err);
+    if (!res.headersSent) {
+      res.status(400).json({ error: "Invalid multipart request", details: err.message });
+    }
+  });
+
+  req.pipe(busboy);
 };
 
-// Initialize Cloudinary on module load
-configureCloudinary();
-
-// Cloudinary folder structure helper
-const CLOUDINARY_FOLDERS = {
-  QUIZ_QUESTIONS: 'quiz/question-images',      // Quiz question images/diagrams
-  COURSE_THUMBNAILS: 'courses/thumbnails',     // Course thumbnail images
-  LESSON_IMAGES: 'lessons/images',              // Lesson images
-  TEST_IMAGES: 'tests/images',                 // Test images
-  USER_AVATARS: 'users/avatars',               // User profile pictures
-  LIBRARY_DOCS: 'library/documents'            // Library document images
-};
-
-// Cloudinary free-tier file size limit (10 MB) - larger files need a paid plan
-const CLOUDINARY_MAX_FILE_BYTES = 10 * 1024 * 1024;
-
-// Upload library document - Uploads PDF to Cloudinary and saves link to database
+// Upload library document - Uploads PDF to DigitalOcean Spaces and saves only file link to database (non-streaming fallback)
 const uploadLibraryDocument = async (req, res) => {
   try {
     const { 
@@ -2087,11 +2245,11 @@ const uploadLibraryDocument = async (req, res) => {
       return res.status(400).json({ error: "PDF file is required" });
     }
 
-    if (file.size > CLOUDINARY_MAX_FILE_BYTES) {
-      const maxMb = CLOUDINARY_MAX_FILE_BYTES / (1024 * 1024);
+    if (file.size > SPACES_MAX_FILE_BYTES) {
+      const maxMb = SPACES_MAX_FILE_BYTES / (1024 * 1024);
       return res.status(400).json({
         error: "File is too large",
-        details: `Maximum size is ${maxMb} MB (Cloudinary limit). Your file is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Use a smaller file or upgrade your Cloudinary plan for higher limits.`
+        details: `Maximum size is ${maxMb} MB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)} MB.`
       });
     }
 
@@ -2105,57 +2263,42 @@ const uploadLibraryDocument = async (req, res) => {
             ? whatsIncluded 
             : [];
       } catch (e) {
-        // If parsing fails, try splitting by newline
         whatsIncludedArray = whatsIncluded.split('\n').filter(item => item.trim());
       }
     }
 
-    // Check if Cloudinary is configured
-    const cloudinaryConfigured = 
-      process.env.CLOUDINARY_CLOUD_NAME && 
-      process.env.CLOUDINARY_API_KEY && 
-      process.env.CLOUDINARY_API_SECRET;
-
-    if (!cloudinaryConfigured) {
-      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+    if (!spacesStorage.isConfigured()) {
+      console.error('DigitalOcean Spaces not configured. Set DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_BUCKET in .env');
       return res.status(500).json({ 
-        error: "Cloudinary is not configured. Please set the required environment variables.",
-        details: "PDFs are uploaded directly to Cloudinary. No local storage is used."
+        error: "DigitalOcean Spaces is not configured. Please set DO_SPACES_KEY, DO_SPACES_SECRET, and DO_SPACES_BUCKET.",
+        details: "PDFs are uploaded to Spaces; only the file URL is stored in MongoDB."
       });
     }
 
-    // Upload PDF directly to Cloudinary (NO local file saving)
-    try {
-      // Convert buffer to base64 data URI for Cloudinary upload
-      const base64Pdf = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      
-      // Upload to Cloudinary with organized folder structure: library/documents
-      // timeout: 5 min (300000 ms) for large PDFs - default is ~60s which can cause TimeoutError
-      const uploadResult = await cloudinary.uploader.upload(base64Pdf, {
-        folder: CLOUDINARY_FOLDERS.LIBRARY_DOCS, // Organized folder: library/documents
-        resource_type: 'raw', // PDF files use 'raw' resource type
-        overwrite: false, // Don't overwrite existing files
-        invalidate: true, // Invalidate CDN cache
-        use_filename: true, // Use original filename
-        unique_filename: true, // Add unique suffix to prevent conflicts
-        timeout: 300000 // 5 minutes - large PDFs can take longer than default 60s
-      });
-      
-      console.log('✅ PDF uploaded to Cloudinary successfully');
-      console.log('   URL:', uploadResult.secure_url);
-      console.log('   Public ID:', uploadResult.public_id);
-      console.log('   Size:', uploadResult.bytes, 'bytes');
+    const uploadId = req.headers["x-upload-id"];
+    if (uploadId) uploadProgress.setProgress(uploadId, 90, "uploading");
 
-      // Create library document with Cloudinary URL
+    try {
+      const { url, key, bytes } = await spacesStorage.uploadBuffer(
+        file.buffer,
+        file.mimetype,
+        SPACES_FOLDERS.LIBRARY_DOCS,
+        file.originalname
+      );
+
+      console.log('✅ PDF uploaded to DigitalOcean Spaces');
+      console.log('   URL:', url);
+      console.log('   Key:', key);
+
       const newDocument = new LibraryDocument({
         name: name.trim(),
         price: {
           actual: Number(priceActual),
           discounted: Number(priceDiscounted)
         },
-        fileUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
+        fileUrl: url, // Only file link stored in MongoDB
         fileName: file.originalname,
-        fileSize: uploadResult.bytes || file.size,
+        fileSize: bytes || file.size,
         class: documentClass.trim(),
         category: category.trim(),
         uploadedBy: req.user?.id || null,
@@ -2172,21 +2315,29 @@ const uploadLibraryDocument = async (req, res) => {
 
       await newDocument.save();
 
+      if (uploadId) {
+        uploadProgress.setProgress(uploadId, 100, "done");
+        uploadProgress.clearProgress(uploadId);
+      }
+
       res.status(201).json({
         success: true,
-        message: "Library document uploaded successfully to Cloudinary",
+        message: "Library document uploaded successfully",
         document: newDocument
       });
 
-    } catch (cloudinaryError) {
-      console.error("❌ Cloudinary upload error:", cloudinaryError);
+    } catch (uploadError) {
+      if (uploadId) uploadProgress.clearProgress(uploadId);
+      console.error("❌ Spaces upload error:", uploadError);
       return res.status(500).json({
-        error: "Failed to upload PDF to Cloudinary",
-        details: cloudinaryError.message
+        error: "Failed to upload PDF to DigitalOcean Spaces",
+        details: uploadError.message
       });
     }
 
   } catch (error) {
+    const uploadId = req.headers["x-upload-id"];
+    if (uploadId) uploadProgress.clearProgress(uploadId);
     console.error("Error uploading library document:", error);
     res.status(400).json({
       error: error.message || "Failed to upload library document"
@@ -2337,75 +2488,47 @@ const getLibraryClasses = async (req, res) => {
   }
 };
 
-// Upload question image/diagram
-// IMPORTANT: Images are uploaded directly to Cloudinary - NO local storage
-// The Cloudinary URL is returned and stored in the database
+// Upload question image/diagram - uploaded to DigitalOcean Spaces, only imageUrl (link) stored in DB
 const uploadQuestionImage = async (req, res) => {
   try {
     console.log('Upload question image endpoint hit');
     const file = req.file;
-    const { questionId } = req.body;
     
     if (!file) {
       return res.status(400).json({ error: "Image file is required" });
     }
 
-    // Check if Cloudinary is configured (REQUIRED - no fallback to local storage)
-    const cloudinaryConfigured = 
-      process.env.CLOUDINARY_CLOUD_NAME && 
-      process.env.CLOUDINARY_API_KEY && 
-      process.env.CLOUDINARY_API_SECRET;
-
-    if (!cloudinaryConfigured) {
-      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+    if (!spacesStorage.isConfigured()) {
+      console.error('DigitalOcean Spaces not configured. Set DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_BUCKET in .env');
       return res.status(500).json({ 
-        error: "Cloudinary is not configured. Please set the required environment variables.",
-        details: "Images are uploaded directly to Cloudinary. No local storage is used."
+        error: "DigitalOcean Spaces is not configured. Please set the required environment variables.",
+        details: "Images are uploaded to Spaces; only the image URL is stored in MongoDB."
       });
     }
 
-    // Upload directly to Cloudinary (NO local file saving)
     try {
-      // Convert buffer to base64 data URI for Cloudinary upload
-      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      
-      // Upload to Cloudinary with optimized settings
-      // Organized folder structure: quiz/question-images
-      const uploadResult = await cloudinary.uploader.upload(base64Image, {
-        folder: CLOUDINARY_FOLDERS.QUIZ_QUESTIONS, // Organized folder: quiz/question-images
-        resource_type: 'image',
-        transformation: [
-          { quality: 'auto' }, // Automatic quality optimization
-          { fetch_format: 'auto' } // Automatic format selection (WebP when supported)
-        ],
-        overwrite: false, // Don't overwrite existing images
-        invalidate: true, // Invalidate CDN cache
-        use_filename: true, // Use original filename
-        unique_filename: true // Add unique suffix to prevent conflicts
-      });
-      
-      console.log('✅ Image uploaded to Cloudinary successfully');
-      console.log('   URL:', uploadResult.secure_url);
-      console.log('   Public ID:', uploadResult.public_id);
-      console.log('   Size:', uploadResult.bytes, 'bytes');
-      
-      // Return Cloudinary URL and metadata - these will be stored in the database
-      // The imageUrl (Cloudinary secure URL) is what gets stored in the Quiz schema
+      const { url, key, bytes } = await spacesStorage.uploadBuffer(
+        file.buffer,
+        file.mimetype,
+        SPACES_FOLDERS.QUIZ_QUESTIONS,
+        file.originalname
+      );
+
+      console.log('✅ Question image uploaded to DigitalOcean Spaces');
+      console.log('   URL:', url);
+
       res.status(200).json({
         success: true,
-        message: "Image uploaded successfully to Cloudinary",
-        imageUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
-        imagePublicId: uploadResult.public_id, // Optional: for future image management
-        width: uploadResult.width,
-        height: uploadResult.height,
-        format: uploadResult.format,
-        bytes: uploadResult.bytes
+        message: "Image uploaded successfully",
+        imageUrl: url, // Only link stored in database
+        imagePublicId: key, // Optional: Spaces object key for future management
+        bytes
       });
-    } catch (cloudinaryError) {
-      console.error("❌ Cloudinary upload error:", cloudinaryError);
+    } catch (uploadError) {
+      console.error("❌ Spaces upload error:", uploadError);
       return res.status(500).json({
-        error: "Failed to upload image to Cloudinary",
-        details: cloudinaryError.message
+        error: "Failed to upload image to DigitalOcean Spaces",
+        details: uploadError.message
       });
     }
     
@@ -2421,24 +2544,23 @@ const uploadQuestionImage = async (req, res) => {
 // Returns recent distinct test images with basic metadata
 const getTestImages = async (req, res) => {
   try {
-    // Find tests that have an image set
     const testsWithImages = await Test.find(
-      { image: { $exists: true, $ne: null } },
+      {},
       { image: 1, imagePublicId: 1, title: 1, createdAt: 1 }
     )
       .sort({ createdAt: -1 })
-      .limit(30)
+      .limit(100)
       .lean();
 
-    // Map to a simple image list and de-duplicate by URL
     const seen = new Set();
     const images = [];
 
     for (const t of testsWithImages) {
-      if (!t.image || seen.has(t.image)) continue;
-      seen.add(t.image);
+      const url = typeof t.image === "string" ? t.image.trim() : "";
+      if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+      seen.add(url);
       images.push({
-        imageUrl: t.image,
+        imageUrl: url,
         imagePublicId: t.imagePublicId || null,
         title: t.title || "Test image",
         createdAt: t.createdAt,
@@ -2459,75 +2581,47 @@ const getTestImages = async (req, res) => {
   }
 };
 
-// Upload test image/diagram
-// IMPORTANT: Images are uploaded directly to Cloudinary - NO local storage
-// The Cloudinary URL is returned and stored in the database
+// Upload test image/diagram - uploaded to DigitalOcean Spaces, only imageUrl (link) stored in DB
 const uploadTestImage = async (req, res) => {
   try {
     console.log('Upload test image endpoint hit');
     const file = req.file;
-    const { testId } = req.body;
     
     if (!file) {
       return res.status(400).json({ error: "Image file is required" });
     }
 
-    // Check if Cloudinary is configured (REQUIRED - no fallback to local storage)
-    const cloudinaryConfigured = 
-      process.env.CLOUDINARY_CLOUD_NAME && 
-      process.env.CLOUDINARY_API_KEY && 
-      process.env.CLOUDINARY_API_SECRET;
-
-    if (!cloudinaryConfigured) {
-      console.error('Cloudinary not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+    if (!spacesStorage.isConfigured()) {
+      console.error('DigitalOcean Spaces not configured. Set DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_BUCKET in .env');
       return res.status(500).json({ 
-        error: "Cloudinary is not configured. Please set the required environment variables.",
-        details: "Images are uploaded directly to Cloudinary. No local storage is used."
+        error: "DigitalOcean Spaces is not configured. Please set the required environment variables.",
+        details: "Images are uploaded to Spaces; only the image URL is stored in MongoDB."
       });
     }
 
-    // Upload directly to Cloudinary (NO local file saving)
     try {
-      // Convert buffer to base64 data URI for Cloudinary upload
-      const base64Image = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      
-      // Upload to Cloudinary with optimized settings
-      // Organized folder structure: tests/images
-      const uploadResult = await cloudinary.uploader.upload(base64Image, {
-        folder: CLOUDINARY_FOLDERS.TEST_IMAGES, // Organized folder: tests/images
-        resource_type: 'image',
-        transformation: [
-          { quality: 'auto' }, // Automatic quality optimization
-          { fetch_format: 'auto' } // Automatic format selection (WebP when supported)
-        ],
-        overwrite: false, // Don't overwrite existing images
-        invalidate: true, // Invalidate CDN cache
-        use_filename: true, // Use original filename
-        unique_filename: true // Add unique suffix to prevent conflicts
-      });
-      
-      console.log('✅ Test image uploaded to Cloudinary successfully');
-      console.log('   URL:', uploadResult.secure_url);
-      console.log('   Public ID:', uploadResult.public_id);
-      console.log('   Size:', uploadResult.bytes, 'bytes');
-      
-      // Return Cloudinary URL and metadata - these will be stored in the database
-      // The imageUrl (Cloudinary secure URL) is what gets stored in the Test schema
+      const { url, key, bytes } = await spacesStorage.uploadBuffer(
+        file.buffer,
+        file.mimetype,
+        SPACES_FOLDERS.TEST_IMAGES,
+        file.originalname
+      );
+
+      console.log('✅ Test image uploaded to DigitalOcean Spaces');
+      console.log('   URL:', url);
+
       res.status(200).json({
         success: true,
-        message: "Test image uploaded successfully to Cloudinary",
-        imageUrl: uploadResult.secure_url, // Cloudinary URL - stored in database
-        imagePublicId: uploadResult.public_id, // Optional: for future image management
-        width: uploadResult.width,
-        height: uploadResult.height,
-        format: uploadResult.format,
-        bytes: uploadResult.bytes
+        message: "Test image uploaded successfully",
+        imageUrl: url, // Only link stored in database
+        imagePublicId: key, // Optional: Spaces object key for future management
+        bytes
       });
-    } catch (cloudinaryError) {
-      console.error("❌ Cloudinary upload error:", cloudinaryError);
+    } catch (uploadError) {
+      console.error("❌ Spaces upload error:", uploadError);
       return res.status(500).json({
-        error: "Failed to upload image to Cloudinary",
-        details: cloudinaryError.message
+        error: "Failed to upload image to DigitalOcean Spaces",
+        details: uploadError.message
       });
     }
     
@@ -2552,6 +2646,115 @@ const getLibraryDocuments = async (req, res) => {
     console.error("Error fetching library documents:", error);
     res.status(500).json({ 
       error: error.message || "Failed to fetch library documents" 
+    });
+  }
+};
+
+// Get single library document by ID (for view/edit)
+const getLibraryDocumentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "Document ID is required" });
+    }
+    const document = await LibraryDocument.findById(id)
+      .populate('uploadedBy', 'name email')
+      .exec();
+    if (!document) {
+      return res.status(404).json({ error: "Library document not found" });
+    }
+    res.status(200).json(document);
+  } catch (error) {
+    console.error("Error fetching library document:", error);
+    res.status(500).json({
+      error: error.message || "Failed to fetch library document",
+    });
+  }
+};
+
+// Update library document (metadata only; file is not re-uploaded)
+const updateLibraryDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      priceActual,
+      priceDiscounted,
+      class: documentClass,
+      category,
+      description,
+      whatsIncluded,
+      bestFor,
+      prerequisites,
+      support,
+      icon,
+      format,
+    } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "Document ID is required" });
+    }
+
+    const doc = await LibraryDocument.findById(id);
+    if (!doc) {
+      return res.status(404).json({ error: "Library document not found" });
+    }
+
+    if (name !== undefined) doc.name = name.trim();
+    if (priceActual !== undefined) doc.price.actual = Number(priceActual);
+    if (priceDiscounted !== undefined) doc.price.discounted = Number(priceDiscounted);
+    if (documentClass !== undefined) doc.class = documentClass.trim();
+    if (category !== undefined) doc.category = category.trim();
+    if (description !== undefined) doc.description = description.trim();
+    if (whatsIncluded !== undefined) {
+      doc.whatsIncluded = Array.isArray(whatsIncluded)
+        ? whatsIncluded
+        : typeof whatsIncluded === "string"
+          ? JSON.parse(whatsIncluded || "[]")
+          : [];
+    }
+    if (doc.additionalInfo) {
+      if (bestFor !== undefined) doc.additionalInfo.bestFor = bestFor.trim();
+      if (prerequisites !== undefined) doc.additionalInfo.prerequisites = prerequisites.trim();
+      if (support !== undefined) doc.additionalInfo.support = support.trim();
+    }
+    if (icon !== undefined) doc.icon = icon.trim();
+    if (format !== undefined) doc.format = format.trim();
+
+    await doc.save();
+    const updated = await LibraryDocument.findById(id).populate('uploadedBy', 'name email');
+    res.status(200).json({
+      success: true,
+      message: "Library document updated successfully",
+      document: updated,
+    });
+  } catch (error) {
+    console.error("Error updating library document:", error);
+    res.status(500).json({
+      error: error.message || "Failed to update library document",
+    });
+  }
+};
+
+// Delete library document (removes from DB only; file remains in Spaces)
+const deleteLibraryDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "Document ID is required" });
+    }
+    const doc = await LibraryDocument.findByIdAndDelete(id);
+    if (!doc) {
+      return res.status(404).json({ error: "Library document not found" });
+    }
+    res.status(200).json({
+      success: true,
+      message: "Library document deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting library document:", error);
+    res.status(500).json({
+      error: error.message || "Failed to delete library document",
     });
   }
 };
@@ -3406,6 +3609,43 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
   }
 };
 
+// SSE endpoint: stream backend upload progress (exact %) for library document uploads
+const getUploadProgress = (req, res) => {
+  const uploadId = req.query.uploadId;
+  if (!uploadId) {
+    return res.status(400).json({ error: "uploadId query parameter is required" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+  const send = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (typeof res.flush === "function") res.flush();
+  };
+
+  const interval = setInterval(() => {
+    const p = uploadProgress.getProgress(uploadId);
+    if (p) send({ percent: p.percent, stage: p.stage });
+    if (p && p.percent >= 100) {
+      clearInterval(interval);
+      res.end();
+    }
+  }, 200);
+
+  const timeout = setTimeout(() => {
+    clearInterval(interval);
+    res.end();
+  }, 10 * 60 * 1000);
+
+  res.on("close", () => {
+    clearInterval(interval);
+    clearTimeout(timeout);
+  });
+};
 
   module.exports = {
     addCourse,
@@ -3434,6 +3674,11 @@ Generate ${numQuestions} questions now. Return ONLY the JSON array.`;
     deleteCourse,
     uploadLibraryDocument,
     getLibraryDocuments,
+    getLibraryDocumentById,
+    updateLibraryDocument,
+    deleteLibraryDocument,
+    getUploadProgress,
+    streamUploadLibraryDocument,
     addLibraryCategory,
     getLibraryCategories,
     addLibraryClass,
