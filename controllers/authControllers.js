@@ -1053,7 +1053,7 @@ const sendLoginOtp = async (req, res) => {
 
     // ✅ Send OTP via SMS
     try {
-      await sendOtpSms(mobile, user.otp);
+      await sendOtpSms(mobile, user.otp, { name: user.name });
     } catch (smsError) {
       console.error("SMS sending failed:", smsError);
       return res.status(500).json({ 
@@ -1217,7 +1217,7 @@ const sendSignupOtp = async (req, res) => {
 
     // ✅ Send OTP via SMS
     try {
-      await sendOtpSms(mobile, user.otp);
+      await sendOtpSms(mobile, user.otp, { name: user.name });
     } catch (smsError) {
       console.error("SMS sending failed:", smsError);
       return res.status(500).json({ 

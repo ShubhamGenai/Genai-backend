@@ -48,7 +48,9 @@ const app = express();
 // CORS Configuration – add DigitalOcean/other origins via CORS_ORIGINS (comma-separated)
 const baseOrigins = [
   "https://genailearning.in",
-    "https://www.genailearning.in"
+    "https://www.genailearning.in",
+    "http://localhost:5173",
+    
 ];
 const extraOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
