@@ -6,6 +6,8 @@ const PaymentSchema = new mongoose.Schema(
     student: { type: mongoose.Schema.Types.ObjectId, ref: "Student", required: true },
     test: { type: mongoose.Schema.Types.ObjectId, ref: "Test" },
     course: { type: mongoose.Schema.Types.ObjectId, ref: "course" },
+    // Optional reference to a purchased library document
+    libraryDocument: { type: mongoose.Schema.Types.ObjectId, ref: "LibraryDocument" },
     razorpayOrderId: { type: String, required: true },
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },

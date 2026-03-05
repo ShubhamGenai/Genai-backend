@@ -70,6 +70,11 @@ router.get("/getAICareerRecommendations", authMiddleware, studentController.getA
 router.get("/library-documents", studentController.getLibraryDocumentsForStudent);
 router.get("/library-documents/:id", studentController.getLibraryDocumentByIdForStudent);
 
+// Library document payments
+router.post("/create-library-payment", authMiddleware, studentController.createLibraryOrder);
+router.post("/verify-library-payment", authMiddleware, studentController.verifyLibraryPayment);
+router.get("/library-purchases", authMiddleware, studentController.getPurchasedLibraryDocuments);
+
 //test payment
 // router.post("/create-course-payment",authMiddleware,studentController.createCourseOrder);
 // router.post("/verify-course-payment",authMiddleware,studentController.verifyCoursePayment);

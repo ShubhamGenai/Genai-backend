@@ -822,6 +822,146 @@ const verifyCoursePayment = async (req, res) => {
   }
 };
 
+// Create Razorpay order for a paid library document
+const createLibraryOrder = async (req, res) => {
+  const { documentId } = req.body;
+  const userId = req.user?.id || req.user?._id;
+
+  try {
+    if (!documentId) {
+      return res.status(400).json({ message: "documentId is required" });
+    }
+
+    const document = await LibraryDocument.findById(documentId);
+    if (!document || !document.isActive) {
+      return res.status(404).json({ message: "Library document not found" });
+    }
+
+    // Ensure document is actually paid
+    const discounted = document.price?.discounted ?? 0;
+    if (!discounted || Number(discounted) === 0) {
+      return res.status(400).json({
+        message: "This library document is free and does not require payment",
+      });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    const amount = Number(discounted);
+
+    const order = await razorpay.orders.create({
+      amount: amount * 100,
+      currency: "INR",
+      receipt: `library_${Date.now()}`,
+    });
+
+    const payment = await paymentSchema.create({
+      userId,
+      student: student._id,
+      libraryDocument: documentId,
+      razorpayOrderId: order.id,
+      amount,
+    });
+
+    res.status(201).json({ order, paymentId: payment._id });
+  } catch (err) {
+    console.error("Error creating library order:", err);
+    res
+      .status(500)
+      .json({ message: "Error creating library order", error: err.message });
+  }
+};
+
+// Verify Razorpay payment for a library document and grant access
+const verifyLibraryPayment = async (req, res) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    paymentId,
+  } = req.body;
+
+  const generated_signature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(razorpay_order_id + "|" + razorpay_payment_id)
+    .digest("hex");
+
+  const isAuthentic = generated_signature === razorpay_signature;
+
+  if (!isAuthentic) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Payment verification failed" });
+  }
+
+  try {
+    const payment = await paymentSchema.findByIdAndUpdate(
+      paymentId,
+      {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        status: "paid",
+      },
+      { new: true }
+    );
+
+    if (!payment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Payment record not found" });
+    }
+
+    const studentId = payment.student;
+    const documentId = payment.libraryDocument;
+
+    if (!documentId) {
+      return res.status(400).json({
+        success: false,
+        message: "No library document associated with this payment",
+      });
+    }
+
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Student not found" });
+    }
+
+    // Grant access by adding document to student's purchasedLibraryDocuments
+    const docIdStr = String(documentId);
+    const alreadyPurchased = (student.purchasedLibraryDocuments || []).some(
+      (d) => String(d) === docIdStr
+    );
+
+    if (!alreadyPurchased) {
+      student.purchasedLibraryDocuments.push(documentId);
+      await student.save();
+    }
+
+    // Optionally increment downloads count
+    await LibraryDocument.findByIdAndUpdate(documentId, {
+      $inc: { downloads: 1 },
+    });
+
+    res.json({
+      success: true,
+      message: "Payment verified and library document unlocked",
+      payment,
+    });
+  } catch (err) {
+    console.error("Error verifying library payment:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error verifying library payment",
+      error: err.message,
+    });
+  }
+};
+
 
 
 
@@ -1416,6 +1556,39 @@ const getLatestCoursesAndTests = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error. Could not fetch data.',
+    });
+  }
+};
+
+// Get all library documents purchased by the authenticated student
+const getPurchasedLibraryDocuments = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
+
+    const student = await Student.findOne({ userId }).populate(
+      "purchasedLibraryDocuments"
+    );
+
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    const documents = student.purchasedLibraryDocuments || [];
+
+    res.status(200).json({
+      success: true,
+      documents,
+    });
+  } catch (error) {
+    console.error("Error fetching purchased library documents:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching purchased library documents",
+      error: error.message,
     });
   }
 };
@@ -2020,5 +2193,8 @@ Return ONLY the JSON array, no other text.`;
     generateQuestionExplanation,
     getAICareerRecommendations,
     getLibraryDocumentsForStudent,
-    getLibraryDocumentByIdForStudent
+    getLibraryDocumentByIdForStudent,
+    createLibraryOrder,
+    verifyLibraryPayment,
+    getPurchasedLibraryDocuments,
   };
