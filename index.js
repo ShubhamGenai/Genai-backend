@@ -52,6 +52,7 @@ const baseOrigins = [
     "http://localhost:5173",
     
 ];
+
 const extraOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
   : [];
