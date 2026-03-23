@@ -16,9 +16,22 @@ router.get("/overview", requireAdmin, adminController.getAdminOverview);
 
 // Users by role (query: role, page, limit, search)
 router.get("/users", requireAdmin, adminController.getUsersByRole);
+router.get("/users/:id", requireAdmin, adminController.getUserByIdForAdmin);
+router.put("/users/:id", requireAdmin, adminController.updateUserByAdmin);
+router.delete("/users/:id", requireAdmin, adminController.deleteUserByAdmin);
 
 // Students management
 router.get("/students", requireAdmin, adminController.getStudentsForAdmin);
+router.post("/students", requireAdmin, adminController.createStudentByAdmin);
+router.put("/students/:id", requireAdmin, adminController.updateStudentByAdmin);
+router.delete("/students/:id", requireAdmin, adminController.deleteStudentByAdmin);
+router.get("/student-reports", requireAdmin, adminController.getSavedStudentReports);
+router.post("/student-reports", requireAdmin, adminController.saveStudentReport);
+router.get("/student-schedules", requireAdmin, adminController.getStudentSchedules);
+router.post("/student-schedules", requireAdmin, adminController.createStudentSchedule);
+router.patch("/student-schedules/:id", requireAdmin, adminController.updateStudentSchedule);
+router.delete("/student-schedules/:id", requireAdmin, adminController.deleteStudentSchedule);
+router.get("/students/:id/details", requireAdmin, adminController.getStudentDetailsForAdmin);
 router.patch(
   "/students/:id/toggle-verification",
   requireAdmin,
