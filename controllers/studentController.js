@@ -16,7 +16,186 @@ const { default:mongoose } = require("mongoose");
 const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
 const Anthropic = require("@anthropic-ai/sdk");
 const { formatAiExplanationToHtml } = require('../utils/aiFormatter');
+const {
+  LIMITS,
+  clip,
+  sanitizeOptionalUrl,
+  normalizeEducationEntry,
+  normalizeSkillEntry,
+  findOrCreateStudent,
+} = require("../utils/studentProfileSanitize");
 dotenv.config();
+
+const getMyStudentProfile = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const user = await User.findById(req.user.id).select("-password").lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    const student = await findOrCreateStudent(Student, req.user.id);
+    const s = student.toObject();
+    const addr = s.address || {};
+    const education = (s.education || []).map((e, idx) => ({
+      _id: e._id ? String(e._id) : `e${idx}`,
+      degree: e.degree || "",
+      institution: e.institution || "",
+      startYear: e.startYear || "",
+      endYear: e.endYear || "",
+      gpa: e.gpa || "",
+      description: e.description || "",
+      achievements: Array.isArray(e.achievements) ? e.achievements : [],
+    }));
+    const skills = (s.skills || []).map((sk) => ({
+      name: sk.name || "",
+      level: sk.level || "beginner",
+      category: sk.category || "other",
+      endorsed: typeof sk.endorsed === "number" ? sk.endorsed : 0,
+    }));
+    return res.json({
+      success: true,
+      data: {
+        name: user.name || "",
+        email: user.email || "",
+        phone: s.contact || user.mobile || "",
+        location: s.location || "",
+        role: user.role,
+        bio: clip(String(s.bio || ""), LIMITS.bio),
+        github: sanitizeOptionalUrl(s.github || "") || "",
+        linkedin: sanitizeOptionalUrl(s.linkedin || "") || "",
+        website: sanitizeOptionalUrl(s.website || "") || "",
+        joinDate: user.createdAt ? new Date(user.createdAt).toISOString().slice(0, 10) : "",
+        dateOfBirth: s.dateOfBirth || "",
+        gender: s.gender || "",
+        nationality: s.nationality || "",
+        avatar: sanitizeOptionalUrl(s.avatar || "", LIMITS.urlField) || "/profile.jpg",
+        address: {
+          street: addr.street || "",
+          city: addr.city || "",
+          state: addr.state || "",
+          country: addr.country || "",
+          pincode: addr.pincode || "",
+        },
+        education,
+        skills,
+      },
+    });
+  } catch (error) {
+    console.error("getMyStudentProfile:", error);
+    return res.status(500).json({ success: false, message: "Failed to load profile" });
+  }
+};
+
+const updateMyStudentProfile = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const body = req.body || {};
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    let userDirty = false;
+    if (typeof body.name === "string") {
+      user.name = clip(body.name, LIMITS.name);
+      userDirty = true;
+    }
+    if (typeof body.phone === "string") {
+      user.mobile = clip(body.phone, LIMITS.phone);
+      userDirty = true;
+    }
+    if (userDirty) await user.save();
+
+    const student = await findOrCreateStudent(Student, req.user.id);
+    const applyOptionalUrl = (field) => {
+      if (typeof body[field] !== "string") return;
+      const t = body[field].trim();
+      if (t === "") {
+        student[field] = "";
+        return;
+      }
+      const safe = sanitizeOptionalUrl(body[field]);
+      if (safe) student[field] = safe;
+    };
+    if (typeof body.bio === "string") student.bio = clip(body.bio, LIMITS.bio);
+    applyOptionalUrl("github");
+    applyOptionalUrl("linkedin");
+    applyOptionalUrl("website");
+    if (typeof body.location === "string") student.location = clip(body.location, LIMITS.line);
+    if (typeof body.dateOfBirth === "string") student.dateOfBirth = clip(body.dateOfBirth, 32);
+    if (typeof body.gender === "string") student.gender = clip(body.gender, 64);
+    if (typeof body.nationality === "string") student.nationality = clip(body.nationality, 64);
+    if (typeof body.avatar === "string") {
+      const t = body.avatar.trim();
+      if (t === "") student.avatar = "";
+      else {
+        const safe = sanitizeOptionalUrl(body.avatar, LIMITS.urlField);
+        if (safe) student.avatar = safe;
+      }
+    }
+    if (typeof body.phone === "string") student.contact = clip(body.phone, LIMITS.phone);
+    if (body.address && typeof body.address === "object") {
+      student.address = {
+        street: clip(String(body.address.street ?? ""), LIMITS.line),
+        city: clip(String(body.address.city ?? ""), LIMITS.line),
+        state: clip(String(body.address.state ?? ""), LIMITS.line),
+        country: clip(String(body.address.country ?? ""), LIMITS.line),
+        pincode: clip(String(body.address.pincode ?? ""), 24),
+      };
+    }
+    await student.save();
+    return res.json({ success: true, message: "Profile updated successfully" });
+  } catch (error) {
+    console.error("updateMyStudentProfile:", error);
+    return res.status(500).json({ success: false, message: "Failed to update profile" });
+  }
+};
+
+const updateMyStudentEducation = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const { education } = req.body || {};
+    if (!Array.isArray(education)) {
+      return res.status(400).json({ success: false, message: "education must be an array" });
+    }
+    const student = await findOrCreateStudent(Student, req.user.id);
+    student.education = education
+      .slice(0, LIMITS.educationMax)
+      .map((e) => normalizeEducationEntry(e));
+    await student.save();
+    return res.json({ success: true, message: "Education updated successfully" });
+  } catch (error) {
+    console.error("updateMyStudentEducation:", error);
+    return res.status(500).json({ success: false, message: "Failed to update education" });
+  }
+};
+
+const updateMyStudentSkills = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const { skills } = req.body || {};
+    if (!Array.isArray(skills)) {
+      return res.status(400).json({ success: false, message: "skills must be an array" });
+    }
+    const student = await findOrCreateStudent(Student, req.user.id);
+    student.skills = skills
+      .slice(0, LIMITS.skillsMax)
+      .map((s) => normalizeSkillEntry(s))
+      .filter((s) => s.name.length > 0);
+    await student.save();
+    return res.json({ success: true, message: "Skills updated successfully" });
+  } catch (error) {
+    console.error("updateMyStudentSkills:", error);
+    return res.status(500).json({ success: false, message: "Failed to update skills" });
+  }
+};
 
 // Initialize Anthropic (Claude) client for AI chat
 let anthropic = null;
@@ -2197,4 +2376,8 @@ Return ONLY the JSON array, no other text.`;
     createLibraryOrder,
     verifyLibraryPayment,
     getPurchasedLibraryDocuments,
+    getMyStudentProfile,
+    updateMyStudentProfile,
+    updateMyStudentEducation,
+    updateMyStudentSkills,
   };

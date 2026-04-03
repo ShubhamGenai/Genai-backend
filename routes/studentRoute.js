@@ -3,6 +3,12 @@ const router = express.Router();
 const studentController = require("../controllers/studentController");
 const authMiddleware = require("../middlewares/AuthMiddleware");
 
+// Student profile (authenticated)
+router.get("/profile", authMiddleware, studentController.getMyStudentProfile);
+router.put("/profile", authMiddleware, studentController.updateMyStudentProfile);
+router.put("/profile/education", authMiddleware, studentController.updateMyStudentEducation);
+router.put("/profile/skills", authMiddleware, studentController.updateMyStudentSkills);
+
 //test
 router.get("/getTests",studentController.getTests);
 router.get("/getTestById/:id",studentController.getTestById)
