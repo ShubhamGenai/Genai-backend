@@ -24,6 +24,47 @@ const SkillSubSchema = new Schema(
   { _id: false }
 );
 
+/** Per-course learning progress (completed lessons, %) stored on the student record. */
+const CourseModuleProgressSchema = new Schema(
+  {
+    moduleId: { type: Types.ObjectId },
+    completedLessonIds: [{ type: Types.ObjectId }],
+  },
+  { _id: false }
+);
+
+const CourseLearningProgressSchema = new Schema(
+  {
+    courseId: { type: Types.ObjectId, ref: "Course", required: true },
+    progressByModule: [CourseModuleProgressSchema],
+    percentComplete: { type: Number, default: 0, min: 0, max: 100 },
+    totalLessons: { type: Number, default: 0 },
+    completedLessonsCount: { type: Number, default: 0 },
+    isCompleted: { type: Boolean, default: false },
+    lastAccessedAt: { type: Date },
+    /** Last lesson the student had open (resume / crash-safe progress). */
+    lastModuleId: { type: Types.ObjectId },
+    lastLessonId: { type: Types.ObjectId },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+/** Per-user AI-generated course overview / lesson HTML (not shared across students). */
+const CourseAiGeneratedEntrySchema = new Schema(
+  {
+    courseId: { type: Types.ObjectId, ref: "Course", required: true },
+    mode: { type: String, enum: ["overview", "lesson"], required: true },
+    lessonKey: { type: String, default: "" },
+    moduleTitle: { type: String, default: "" },
+    lessonTitle: { type: String, default: "" },
+    contentMarkdown: { type: String, default: "" },
+    contentHtml: { type: String, default: "" },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const StudentSchema = new mongoose.Schema(
   {
     userId: {
@@ -60,6 +101,9 @@ const StudentSchema = new mongoose.Schema(
 
     // Purchased library documents that the student can access anytime
     purchasedLibraryDocuments: [{ type: Types.ObjectId, ref: "LibraryDocument" }],
+
+    courseAiGeneratedContent: [CourseAiGeneratedEntrySchema],
+    courseLearningProgress: [CourseLearningProgressSchema],
   },
   { timestamps: true }
 );

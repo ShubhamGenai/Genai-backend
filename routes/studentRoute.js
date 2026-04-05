@@ -29,7 +29,9 @@ router.post("/submitTest",authMiddleware,studentController.submitTest)
 router.post("/create-payment",authMiddleware,studentController.createOrder);
 router.post("/verify-payment",authMiddleware,studentController.verifyPayment);
 router.post("/enroll-free-test",authMiddleware,studentController.enrollFreeTest);
-
+router.post("/enroll-free-course", authMiddleware, studentController.enrollFreeCourse);
+router.get("/course-access/:courseId", authMiddleware, studentController.getCourseAccessStatus);
+router.get("/course-player-data/:courseId", authMiddleware, studentController.getCoursePlayerData);
 
 //course/
 router.get("/getCourse",studentController.getCourse);
@@ -68,6 +70,22 @@ router.post("/ai-chat", authMiddleware, studentController.aiChat);
 
 // Generate question explanation
 router.post("/generate-question-explanation", authMiddleware, studentController.generateQuestionExplanation);
+
+// AI-generated course content (per course / lesson); persisted per student
+router.post("/generate-course-content", authMiddleware, studentController.generateCourseContent);
+router.post(
+  "/generate-lesson-from-context",
+  authMiddleware,
+  studentController.generateLessonFromContext
+);
+router.get(
+  "/course-ai-content/:courseId",
+  authMiddleware,
+  studentController.getStudentCourseAiContent
+);
+
+router.post("/course-progress", authMiddleware, studentController.updateCourseProgress);
+router.get("/course-progress/:courseId", authMiddleware, studentController.getCourseProgress);
 
 // Get AI career recommendations
 router.get("/getAICareerRecommendations", authMiddleware, studentController.getAICareerRecommendations);

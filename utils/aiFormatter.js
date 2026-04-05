@@ -2,6 +2,31 @@
 // Goal: improve readability, spacing, and format as HTML for frontend rendering
 
 /**
+ * Remove "Check your understanding" quiz blocks and LaTeX-style inline answers from rendered HTML.
+ */
+function postProcessAiHtml(html) {
+  if (!html || typeof html !== 'string') return html;
+  let s = html;
+  const lower = s.toLowerCase();
+  const marker = 'check your understanding';
+  const cut = lower.indexOf(marker);
+  if (cut !== -1 && cut > 100) {
+    const blockStart = s.lastIndexOf('<p', cut);
+    if (blockStart !== -1 && cut - blockStart < 600) {
+      s = s.slice(0, blockStart).trim();
+    } else {
+      s = s.slice(0, cut).trim();
+    }
+  }
+  s = s.replace(/\$\\?textbf\s*\{\s*Answer\s*\}\$\s*:?/gi, '');
+  s = s.replace(/\$\\\s*textbf\s*\{\s*Answer\s*\}\$\s*:?/gi, '');
+  s = s.replace(/\$\s*Answer\s*\$\s*:?/gi, '');
+  s = s.replace(/\*\*Answer\*\*\s*:?\s*/gi, '');
+  s = s.replace(/\\\|/g, '|');
+  return s.trim();
+}
+
+/**
  * Convert AI explanation text to formatted HTML
  * - Normalizes spacing around LaTeX formulas
  * - Converts newlines to proper HTML paragraphs
@@ -75,7 +100,8 @@ const formatAiExplanationToHtml = (rawText = '') => {
       return `<p class="mb-2 leading-relaxed">${trimmed}</p>`;
     }).filter(p => p).join('');
 
-    return htmlParagraphs || `<p class="mb-2 leading-relaxed">${text}</p>`;
+    const out = htmlParagraphs || `<p class="mb-2 leading-relaxed">${text}</p>`;
+    return postProcessAiHtml(out);
   } catch (error) {
     // If anything goes wrong, return safe HTML with escaped text
     const escaped = rawText
@@ -84,11 +110,12 @@ const formatAiExplanationToHtml = (rawText = '') => {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>');
-    return `<p class="mb-2 leading-relaxed">${escaped}</p>`;
+    return postProcessAiHtml(`<p class="mb-2 leading-relaxed">${escaped}</p>`);
   }
 };
 
 module.exports = {
   formatAiExplanationToHtml,
+  postProcessAiHtml,
 };
 
