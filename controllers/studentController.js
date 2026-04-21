@@ -16,6 +16,7 @@ const { default:mongoose } = require("mongoose");
 const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
 const Anthropic = require("@anthropic-ai/sdk");
 const { formatAiExplanationToHtml } = require('../utils/aiFormatter');
+const { logStudentActivity } = require("./studentActivityController");
 const {
   LIMITS,
   clip,
@@ -489,6 +490,12 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
       });
   
       await submission.save();
+      await logStudentActivity({
+        userId,
+        eventType: "quiz_submit",
+        submissionId: submission._id,
+        metadata: { quizCount: Array.isArray(quizIds) ? quizIds.length : 0 },
+      });
   
       res.status(201).json({
         message: 'Quiz submitted successfully',
@@ -640,6 +647,20 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
       });
 
       await submission.save();
+      await logStudentActivity({
+        userId,
+        studentId: student._id,
+        eventType: "test_submit",
+        testId,
+        submissionId: submission._id,
+        score: scorePercentage,
+        metadata: {
+          status,
+          correctAnswers,
+          incorrectAnswers,
+          unanswered,
+        },
+      });
 
       res.status(201).json({
         success: true,
@@ -762,6 +783,13 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
         testId,
         paymentStatus: "completed",
       });
+      await logStudentActivity({
+        userId: req.user?.id || req.user?._id,
+        studentId,
+        eventType: "test_payment",
+        testId,
+        metadata: { paymentId: payment?._id, razorpayPaymentId: razorpay_payment_id },
+      });
   
       res.json({ success: true, message: "Payment verified and student enrolled", payment });
   
@@ -854,6 +882,13 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
           paymentStatus: "free", // Mark as free enrollment
         });
       }
+      await logStudentActivity({
+        userId,
+        studentId,
+        eventType: "test_enroll",
+        testId,
+        metadata: { mode: "free" },
+      });
 
       res.json({
         success: true,
@@ -991,6 +1026,13 @@ const verifyCoursePayment = async (req, res) => {
       studentId,
       courseId,
       paymentStatus: "completed",
+    });
+    await logStudentActivity({
+      userId: req.user?.id || req.user?._id,
+      studentId,
+      eventType: "course_payment",
+      courseId,
+      metadata: { paymentId: payment?._id, razorpayPaymentId: razorpay_payment_id },
     });
 
     res.json({ success: true, message: "Payment verified and student enrolled", payment });
@@ -1255,6 +1297,16 @@ const verifyCartPayment = async (req, res) => {
 
     // Clear the cart
     await Cart.findOneAndUpdate({ userId }, { courses: [], tests: [] });
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_payment",
+      metadata: {
+        mode: "cart",
+        enrolledCourseIds: enrolledCourseIds.map((x) => String(x)),
+        enrolledTestIds: enrolledTestIds.map((x) => String(x)),
+      },
+    });
 
     res.json({ success: true, message: "Payment verified and enrolled successfully", enrolledCourseIds, enrolledTestIds });
   } catch (error) {
@@ -2959,6 +3011,16 @@ const updateCourseProgress = async (req, res) => {
       }
     }
 
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_progress",
+      courseId: course._id,
+      moduleId,
+      lessonId,
+      progressPercent: entry.percentComplete,
+      metadata: { action },
+    });
     return res.json({
       success: true,
       courseId: String(course._id),
@@ -3189,6 +3251,13 @@ const enrollFreeCourse = async (req, res) => {
       studentId: student._id,
       courseId: course._id,
       paymentStatus: "completed",
+    });
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_enroll",
+      courseId: course._id,
+      metadata: { mode: "free" },
     });
 
     return res.json({

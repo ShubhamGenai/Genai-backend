@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const studentController = require("../controllers/studentController");
+const studentActivityController = require("../controllers/studentActivityController");
 const authMiddleware = require("../middlewares/AuthMiddleware");
 
 // Student profile (authenticated)
@@ -86,6 +87,8 @@ router.get(
 
 router.post("/course-progress", authMiddleware, studentController.updateCourseProgress);
 router.get("/course-progress/:courseId", authMiddleware, studentController.getCourseProgress);
+router.get("/activity-timeline", authMiddleware, studentActivityController.getMyActivityTimeline);
+router.post("/activity-track", authMiddleware, studentActivityController.trackMyActivity);
 
 // Get AI career recommendations
 router.get("/getAICareerRecommendations", authMiddleware, studentController.getAICareerRecommendations);
