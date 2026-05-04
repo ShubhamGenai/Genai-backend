@@ -1109,6 +1109,8 @@ const getModuleById = async (req, res) => {
 //   }
 // };
 
+const VALID_TEST_KINDS = ["standard", "practice", "mock", "test_series"];
+
 const addTest = async (req, res) => {
   try {
     const {
@@ -1128,8 +1130,14 @@ const addTest = async (req, res) => {
       image, // Test image URL (from Spaces upload)
       imagePublicId, // Object key from storage (for future management)
       ratings = [], // optional: handle if ratings are not provided
-      isFree = false
+      isFree = false,
+      testKind: rawTestKind,
     } = req.body;
+
+    const testKind =
+      rawTestKind && VALID_TEST_KINDS.includes(String(rawTestKind))
+        ? String(rawTestKind)
+        : "standard";
 
     let quizIds = [];
     let totalMarks = 0;
@@ -1206,7 +1214,8 @@ const addTest = async (req, res) => {
       totalMarks,
       ratings,
       averageRating,
-      totalReviews
+      totalReviews,
+      testKind,
     });
 
     await newTest.save();
@@ -1253,7 +1262,8 @@ const updateTest = async (req, res) => {
       passingScore,
       image,
       imagePublicId,
-      isFree = false
+      isFree = false,
+      testKind: rawTestKind,
     } = req.body;
 
     let quizIds = [];
@@ -1263,6 +1273,11 @@ const updateTest = async (req, res) => {
     const isTestFree = Boolean(isFree);
     const actual = price?.actual;
     const discounted = price?.discounted;
+
+    const testKind =
+      rawTestKind !== undefined && rawTestKind !== null && VALID_TEST_KINDS.includes(String(rawTestKind))
+        ? String(rawTestKind)
+        : existingTest.testKind || "standard";
 
     // Validate required fields
     if (!title || !company || !description || !duration || !numberOfQuestions || !level) {
@@ -1352,7 +1367,8 @@ const updateTest = async (req, res) => {
         totalMarks,
         ratings,
         averageRating,
-        totalReviews
+        totalReviews,
+        testKind,
       },
       { new: true, runValidators: true }
     );
@@ -1369,12 +1385,28 @@ const updateTest = async (req, res) => {
   }
 };
 
-// Fetch all tests for content manager (independent from student routes)
+// Fetch all tests for content manager (optional ?testKind= same as student)
 const getTests = async (req, res) => {
   try {
-    const tests = await Test.find();
-    console.log(tests);
-    
+    const { testKind } = req.query;
+    let filter = {};
+    if (testKind) {
+      if (!VALID_TEST_KINDS.includes(String(testKind))) {
+        return res.status(400).json({ error: "Invalid testKind query" });
+      }
+      if (String(testKind) === "standard") {
+        filter = {
+          $or: [
+            { testKind: "standard" },
+            { testKind: { $exists: false } },
+            { testKind: null },
+          ],
+        };
+      } else {
+        filter = { testKind: String(testKind) };
+      }
+    }
+    const tests = await Test.find(filter);
     res.status(200).json(tests);
   } catch (error) {
     console.error("Error fetching tests:", error);
@@ -1448,10 +1480,58 @@ const deleteTest = async (req, res) => {
   }
 };
 
+const patchQuizQuestionBank = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { includeInQuestionBank, bankSubject, bankCategory } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid quiz ID" });
+    }
+
+    const hasFlag = typeof includeInQuestionBank === "boolean";
+    const hasMeta =
+      bankSubject !== undefined ||
+      bankCategory !== undefined;
+
+    if (!hasFlag && !hasMeta) {
+      return res.status(400).json({
+        error: "Send includeInQuestionBank and/or bankSubject / bankCategory",
+      });
+    }
+
+    const $set = {};
+    if (hasFlag) {
+      $set.includeInQuestionBank = includeInQuestionBank;
+    }
+    if (bankSubject !== undefined) {
+      $set.bankSubject = String(bankSubject || "").trim() || "General";
+    }
+    if (bankCategory !== undefined) {
+      $set.bankCategory = String(bankCategory || "").trim() || "General";
+    }
+
+    const quiz = await Quiz.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, runValidators: true }
+    );
+
+    if (!quiz) {
+      return res.status(404).json({ error: "Quiz not found" });
+    }
+
+    return res.status(200).json({ message: "Question bank updated", quiz });
+  } catch (error) {
+    console.error("patchQuizQuestionBank:", error);
+    return res.status(500).json({ error: error.message || "Failed to update quiz" });
+  }
+};
+
 const addQuiz = async (req, res) => {
   try {
     console.log('Add quiz request body:', JSON.stringify(req.body, null, 2));
-    const { title, duration, questions } = req.body;
+    const { title, duration, questions, includeInQuestionBank, bankSubject, bankCategory } = req.body;
 
     // ✅ Validate data
     if (!title || title.trim() === '') {
@@ -1501,7 +1581,10 @@ const addQuiz = async (req, res) => {
     // ✅ Save the quiz
     const newQuiz = new Quiz({ 
       title: title.trim(), 
-      duration: parseInt(duration), 
+      duration: parseInt(duration),
+      includeInQuestionBank: Boolean(includeInQuestionBank),
+      bankSubject: String(bankSubject || "").trim() || "General",
+      bankCategory: String(bankCategory || "").trim() || "General",
       questions: questions.map(q => {
         // Use the same filtering logic as validation
         const validOptions = q.options
@@ -3659,6 +3742,7 @@ const getUploadProgress = (req, res) => {
     updateTest,
     addQuiz,
     updateQuiz,
+    patchQuizQuestionBank,
     deleteQuiz,
     getQuiz,
     getLesson,

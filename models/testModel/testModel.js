@@ -51,7 +51,13 @@ const TestSchema = new mongoose.Schema(
     averageRating: { type: Number, default: 0 },
     totalReviews: { type: Number, default: 0 },
     passingScore: { type: Number, required: true },
-    totalMarks: { type: Number, required: true }
+    totalMarks: { type: Number, required: true },
+    /** Where the test appears in student hubs (catalog filters). */
+    testKind: {
+      type: String,
+      enum: ["standard", "practice", "mock", "test_series"],
+      default: "standard",
+    },
   },
   { timestamps: true }
 );

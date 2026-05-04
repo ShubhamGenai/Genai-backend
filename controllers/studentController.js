@@ -16,6 +16,7 @@ const { default:mongoose } = require("mongoose");
 const EnrolledCourse = require("../models/courseModel/enrolledCourseModel");
 const Anthropic = require("@anthropic-ai/sdk");
 const { formatAiExplanationToHtml } = require('../utils/aiFormatter');
+const { logStudentActivity } = require("./studentActivityController");
 const {
   LIMITS,
   clip,
@@ -220,13 +221,171 @@ const getCourse = async (req, res) => {
     }
   };
   
-  // ✅ Fetch all tests
+  const TEST_KINDS = ["standard", "practice", "mock", "test_series"];
+
+  // ✅ Fetch tests (optional ?testKind=practice|mock|test_series|standard)
   const getTests = async (req, res) => {
     try {
-      const tests = await Test.find() // Populate quizzes if needed
+      const { testKind } = req.query;
+      let filter = {};
+      if (testKind) {
+        if (!TEST_KINDS.includes(String(testKind))) {
+          return res.status(400).json({ error: "Invalid testKind query" });
+        }
+        if (String(testKind) === "standard") {
+          filter = {
+            $or: [
+              { testKind: "standard" },
+              { testKind: { $exists: false } },
+              { testKind: null },
+            ],
+          };
+        } else {
+          filter = { testKind: String(testKind) };
+        }
+      }
+      const tests = await Test.find(filter);
       res.status(200).json(tests);
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  };
+
+  /** Student question bank: grouped by subject + category (no correct answers in GET). */
+  const getQuestionBank = async (req, res) => {
+    try {
+      const search = String(req.query.search || "").trim().toLowerCase();
+
+      const quizzes = await Quiz.find({ includeInQuestionBank: true })
+        .select("title questions bankSubject bankCategory")
+        .lean();
+
+      const groupMap = new Map();
+
+      for (const q of quizzes) {
+        const subject = String(q.bankSubject || "General").trim() || "General";
+        const category = String(q.bankCategory || "General").trim() || "General";
+        const key = `${subject}|||${category}`;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, { subject, category, questions: [] });
+        }
+        const bucket = groupMap.get(key);
+        const questionList = q.questions || [];
+
+        questionList.forEach((sub, idx) => {
+          const text = String(sub.questionText || "");
+          if (search) {
+            const hay = `${text} ${subject} ${category} ${q.title || ""}`.toLowerCase();
+            if (!hay.includes(search)) return;
+          }
+          const subId = sub._id != null ? String(sub._id) : null;
+          bucket.questions.push({
+            id: `${q._id}_${subId || `idx${idx}`}`,
+            quizId: String(q._id),
+            questionId: subId || undefined,
+            questionIndex: subId == null ? idx : undefined,
+            quizTitle: q.title,
+            questionText: text,
+            passage: sub.passage || "",
+            options: Array.isArray(sub.options) ? sub.options.map((o) => String(o)) : [],
+            marks: sub.marks && !Number.isNaN(Number(sub.marks)) ? Number(sub.marks) : 1,
+            imageUrl:
+              sub.imageUrl && String(sub.imageUrl).trim()
+                ? String(sub.imageUrl).trim()
+                : "",
+          });
+        });
+      }
+
+      const groups = Array.from(groupMap.values())
+        .filter((g) => g.questions.length > 0)
+        .sort(
+          (a, b) =>
+            a.subject.localeCompare(b.subject, undefined, { sensitivity: "base" }) ||
+            a.category.localeCompare(b.category, undefined, { sensitivity: "base" })
+        );
+
+      const totalQuestions = groups.reduce((n, g) => n + g.questions.length, 0);
+
+      res.status(200).json({
+        success: true,
+        groups,
+        totalQuestions,
+      });
+    } catch (error) {
+      console.error("getQuestionBank:", error);
+      res.status(500).json({ success: false, error: error.message || "Failed to load question bank" });
+    }
+  };
+
+  /** Signed-in students only: reveal correct answer for a question-bank item. */
+  const revealQuestionBankAnswer = async (req, res) => {
+    try {
+      const userId = req.user?.id || req.user?._id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Sign in required" });
+      }
+      if (req.user?.role && req.user.role !== "student") {
+        return res.status(403).json({ success: false, message: "Students only" });
+      }
+
+      const { quizId, questionId, questionIndex } = req.body || {};
+      if (!quizId || (!questionId && questionIndex === undefined)) {
+        return res.status(400).json({
+          success: false,
+          message: "quizId and (questionId or questionIndex) are required",
+        });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(quizId)) {
+        return res.status(400).json({ success: false, message: "Invalid quizId" });
+      }
+
+      const quiz = await Quiz.findOne({
+        _id: quizId,
+        includeInQuestionBank: true,
+      });
+
+      if (!quiz) {
+        return res.status(404).json({ success: false, message: "Quiz not found or not in question bank" });
+      }
+
+      let sub = null;
+      if (questionId) {
+        try {
+          sub = quiz.questions.id(String(questionId));
+        } catch (e) {
+          sub = null;
+        }
+        if (!sub) {
+          sub = (quiz.questions || []).find((x) => String(x._id) === String(questionId));
+        }
+      } else {
+        const qIdx = parseInt(questionIndex, 10);
+        if (!Number.isNaN(qIdx) && qIdx >= 0) {
+          sub = quiz.questions[qIdx];
+        }
+      }
+
+      if (!sub) {
+        return res.status(404).json({ success: false, message: "Question not found" });
+      }
+
+      return res.status(200).json({
+        success: true,
+        correctAnswer: String(sub.answer || "").trim(),
+        questionText: sub.questionText,
+        options: (sub.options || []).map((o) => String(o)),
+        subject: quiz.bankSubject || "General",
+        category: quiz.bankCategory || "General",
+        quizTitle: quiz.title,
+      });
+    } catch (error) {
+      console.error("revealQuestionBankAnswer:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reveal answer",
+      });
     }
   };
 
@@ -489,6 +648,12 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
       });
   
       await submission.save();
+      await logStudentActivity({
+        userId,
+        eventType: "quiz_submit",
+        submissionId: submission._id,
+        metadata: { quizCount: Array.isArray(quizIds) ? quizIds.length : 0 },
+      });
   
       res.status(201).json({
         message: 'Quiz submitted successfully',
@@ -640,6 +805,20 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
       });
 
       await submission.save();
+      await logStudentActivity({
+        userId,
+        studentId: student._id,
+        eventType: "test_submit",
+        testId,
+        submissionId: submission._id,
+        score: scorePercentage,
+        metadata: {
+          status,
+          correctAnswers,
+          incorrectAnswers,
+          unanswered,
+        },
+      });
 
       res.status(201).json({
         success: true,
@@ -762,6 +941,13 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
         testId,
         paymentStatus: "completed",
       });
+      await logStudentActivity({
+        userId: req.user?.id || req.user?._id,
+        studentId,
+        eventType: "test_payment",
+        testId,
+        metadata: { paymentId: payment?._id, razorpayPaymentId: razorpay_payment_id },
+      });
   
       res.json({ success: true, message: "Payment verified and student enrolled", payment });
   
@@ -854,6 +1040,13 @@ const getLibraryDocumentByIdForStudent = async (req, res) => {
           paymentStatus: "free", // Mark as free enrollment
         });
       }
+      await logStudentActivity({
+        userId,
+        studentId,
+        eventType: "test_enroll",
+        testId,
+        metadata: { mode: "free" },
+      });
 
       res.json({
         success: true,
@@ -887,11 +1080,10 @@ try {
   // Convert string IDs to ObjectId if needed
   const objectIds = moduleIds.map(id => new mongoose.Types.ObjectId(id));
 
-  // Find modules and populate lessons and quizzes inside lessons
-  const modules = await Module.find({ _id: { $in: objectIds } })
-   
-    
-
+  const modules = await Module.find({ _id: { $in: objectIds } }).populate({
+    path: "lessons",
+    select: "title content duration",
+  });
 
   res.json({ modules });
 } catch (err) {
@@ -992,6 +1184,13 @@ const verifyCoursePayment = async (req, res) => {
       studentId,
       courseId,
       paymentStatus: "completed",
+    });
+    await logStudentActivity({
+      userId: req.user?.id || req.user?._id,
+      studentId,
+      eventType: "course_payment",
+      courseId,
+      metadata: { paymentId: payment?._id, razorpayPaymentId: razorpay_payment_id },
     });
 
     res.json({ success: true, message: "Payment verified and student enrolled", payment });
@@ -1256,6 +1455,16 @@ const verifyCartPayment = async (req, res) => {
 
     // Clear the cart
     await Cart.findOneAndUpdate({ userId }, { courses: [], tests: [] });
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_payment",
+      metadata: {
+        mode: "cart",
+        enrolledCourseIds: enrolledCourseIds.map((x) => String(x)),
+        enrolledTestIds: enrolledTestIds.map((x) => String(x)),
+      },
+    });
 
     res.json({ success: true, message: "Payment verified and enrolled successfully", enrolledCourseIds, enrolledTestIds });
   } catch (error) {
@@ -1637,6 +1846,43 @@ const getDashboardOverview = async (req, res) => {
     const intermediateCompleted = enrolledCourseRecords.filter(c => c.courseId?.level === 'Intermediate' && c.isCompleted).length;
     const intermediateProgress = intermediateCourses > 0 ? Math.round((intermediateCompleted / intermediateCourses) * 100) : 0;
 
+    const progressByCourse = new Map();
+    for (const row of student.courseLearningProgress || []) {
+      if (row?.courseId) {
+        progressByCourse.set(String(row.courseId), row);
+      }
+    }
+
+    const coursesWithProgress = enrolledCourseRecords
+      .filter((c) => c.paymentStatus === "completed" && c.courseId)
+      .map((c) => {
+        const cid = String(c.courseId._id || c.courseId);
+        const row = progressByCourse.get(cid);
+        const pct =
+          row != null
+            ? Math.min(100, Math.max(0, Number(row.percentComplete) || 0))
+            : c.isCompleted
+              ? 100
+              : 0;
+        return {
+          courseId: cid,
+          title: c.courseId?.title || "Course",
+          category: c.courseId?.category || "",
+          level: c.courseId?.level || "",
+          percentComplete: pct,
+          completedLessonsCount: row?.completedLessonsCount ?? 0,
+          totalLessons: row?.totalLessons ?? 0,
+          isCompleted: Boolean(c.isCompleted || row?.isCompleted),
+          lastAccessedAt: row?.lastAccessedAt || c.updatedAt || c.createdAt,
+        };
+      })
+      .sort((a, b) => {
+        const ta = a.lastAccessedAt ? new Date(a.lastAccessedAt).getTime() : 0;
+        const tb = b.lastAccessedAt ? new Date(b.lastAccessedAt).getTime() : 0;
+        return tb - ta;
+      })
+      .slice(0, 12);
+
     // Actionable items
     const actionableItems = [
       {
@@ -1680,6 +1926,7 @@ const getDashboardOverview = async (req, res) => {
         },
         conceptClarity,
         recentTestScores: recentTestScores.sort((a, b) => new Date(b.attemptDate) - new Date(a.attemptDate)),
+        coursesWithProgress,
         learningJourney: [
           {
             stage: "Foundation",
@@ -2341,8 +2588,980 @@ Return ONLY the JSON array, no other text.`;
 
 
   
+const normalizeCourseAiLessonKey = (moduleTitle, lessonTitle) => {
+  const m = String(moduleTitle || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const l = String(lessonTitle || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return `${m}::${l}`.slice(0, 512);
+};
+
+const findStudentAiCourseEntry = (student, courseId, mode, lessonKey) => {
+  const cid = String(courseId);
+  const lk = lessonKey || "";
+  return (student.courseAiGeneratedContent || []).find(
+    (e) => String(e.courseId) === cid && e.mode === mode && String(e.lessonKey || "") === lk
+  );
+};
+
+const upsertStudentAiCourseEntry = async (studentId, fields) => {
+  const student = await Student.findById(studentId);
+  if (!student) {
+    throw new Error("Student not found");
+  }
+  if (!student.courseAiGeneratedContent) {
+    student.courseAiGeneratedContent = [];
+  }
+  const cid = String(fields.courseId);
+  const lk = fields.lessonKey || "";
+  const arr = student.courseAiGeneratedContent;
+  const ix = arr.findIndex(
+    (e) => String(e.courseId) === cid && e.mode === fields.mode && String(e.lessonKey || "") === lk
+  );
+  const doc = {
+    courseId: fields.courseId,
+    mode: fields.mode,
+    lessonKey: lk,
+    moduleTitle: fields.moduleTitle || "",
+    lessonTitle: fields.lessonTitle || "",
+    contentMarkdown: fields.contentMarkdown || "",
+    contentHtml: fields.contentHtml || "",
+    updatedAt: new Date(),
+  };
+  if (ix >= 0) {
+    arr[ix] = doc;
+  } else {
+    arr.push(doc);
+  }
+  student.markModified("courseAiGeneratedContent");
+  await student.save();
+};
+
+const coursePriceIsFree = (price) =>
+  Number(price?.discounted) === 0 || Number(price?.actual) === 0;
+
+/** Returns { allowed, isFreeCourse? } — isFreeCourse set when not allowed (for error codes). */
+const getCourseEnrollmentGate = async (studentMongoId, courseLean) => {
+  const enrollment = await EnrolledCourse.findOne({
+    studentId: studentMongoId,
+    courseId: courseLean._id,
+    paymentStatus: "completed",
+  });
+  if (enrollment) {
+    return { allowed: true };
+  }
+  return { allowed: false, isFreeCourse: coursePriceIsFree(courseLean.price) };
+};
+
+const sendCourseEnrollmentRequired = (res, isFreeCourse) =>
+  res.status(403).json({
+    success: false,
+    code: isFreeCourse ? "FREE_ENROLL_REQUIRED" : "PURCHASE_REQUIRED",
+    message: isFreeCourse
+      ? "Enroll in this free course to access lessons, AI content, and progress."
+      : "Purchase this course to access lessons, AI content, and progress.",
+  });
+
+/**
+ * AI-generated course content for the selected course (overview or a specific lesson).
+ * Persists on the Student document (courseAiGeneratedContent) for this user only.
+ * Pass regenerate: true to force a new LLM call and overwrite stored content.
+ */
+const generateCourseContent = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can use this endpoint" });
+    }
+
+    const {
+      courseId,
+      mode = "lesson",
+      moduleTitle,
+      lessonTitle,
+      regenerate,
+      lessonSourceContent,
+    } = req.body || {};
+    const forceRegenerate = regenerate === true || regenerate === "true" || regenerate === 1;
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+
+    if (!["overview", "lesson"].includes(mode)) {
+      return res.status(400).json({ success: false, message: 'mode must be "overview" or "lesson"' });
+    }
+
+    if (!anthropic) {
+      return res.status(500).json({
+        success: false,
+        message: "AI service is not available. Please contact support.",
+      });
+    }
+
+    const courseForAccess = await Course.findById(courseId).select("price").lean();
+    if (!courseForAccess) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const gate = await getCourseEnrollmentGate(student._id, courseForAccess);
+    if (!gate.allowed) {
+      return sendCourseEnrollmentRequired(res, gate.isFreeCourse);
+    }
+
+    let lessonKey = "";
+    if (mode === "lesson") {
+      if (!lessonTitle || !String(lessonTitle).trim()) {
+        return res.status(400).json({
+          success: false,
+          message: 'lessonTitle is required when mode is "lesson"',
+        });
+      }
+      lessonKey = normalizeCourseAiLessonKey(moduleTitle, lessonTitle);
+    }
+
+    if (!forceRegenerate) {
+      const cached = findStudentAiCourseEntry(student, courseForAccess._id, mode, lessonKey);
+      if (cached?.contentHtml) {
+        return res.json({
+          success: true,
+          fromCache: true,
+          mode,
+          courseId: String(courseForAccess._id),
+          contentHtml: cached.contentHtml,
+          contentMarkdown: cached.contentMarkdown || "",
+        });
+      }
+    }
+
+    const course = await Course.findById(courseId).populate({
+      path: "modules",
+      populate: { path: "lessons" },
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const moduleLines = [];
+    for (const mod of course.modules || []) {
+      const titles = (mod.lessons || []).map((l) => l.title).filter(Boolean);
+      moduleLines.push(
+        `- Module: ${mod.title || "Untitled"}\n  Lessons: ${titles.length ? titles.join("; ") : "(none listed)"}`
+      );
+    }
+    const curriculumOutline = moduleLines.join("\n");
+
+    const learningBits = [
+      ...(course.learningOutcomes || []).length
+        ? [`Learning outcomes:\n${course.learningOutcomes.map((o) => `- ${o}`).join("\n")}`]
+        : [],
+      ...(course.targetAudience || []).length
+        ? [`Target audience:\n${course.targetAudience.map((t) => `- ${t}`).join("\n")}`]
+        : [],
+    ].join("\n\n");
+
+    let lessonContext = "";
+    if (mode === "lesson") {
+      const needle = String(lessonTitle).trim().toLowerCase();
+      const modNeedle = moduleTitle ? String(moduleTitle).trim().toLowerCase() : null;
+      let matched = null;
+      for (const mod of course.modules || []) {
+        if (modNeedle && String(mod.title || "").toLowerCase() !== modNeedle) continue;
+        for (const les of mod.lessons || []) {
+          if (String(les.title || "").toLowerCase() === needle) {
+            matched = { module: mod.title, lesson: les };
+            break;
+          }
+        }
+        if (matched) break;
+      }
+      if (!matched) {
+        for (const mod of course.modules || []) {
+          for (const les of mod.lessons || []) {
+            if (String(les.title || "").toLowerCase().includes(needle)) {
+              matched = { module: mod.title, lesson: les };
+              break;
+            }
+          }
+          if (matched) break;
+        }
+      }
+      if (matched?.lesson?.content && matched.lesson.content !== "none") {
+        lessonContext = `\nExisting lesson notes (use as grounding, expand and teach clearly):\n${matched.lesson.content.slice(0, 12000)}`;
+      }
+      const clientCtx =
+        typeof lessonSourceContent === "string" && lessonSourceContent.trim()
+          ? lessonSourceContent.trim().slice(0, 12000)
+          : "";
+      if (clientCtx) {
+        lessonContext += `\n\nLesson outline / notes from the app (use as context; align the teaching with this):\n${clientCtx}`;
+      }
+    }
+
+    let instructions;
+    if (mode === "overview") {
+      instructions = `Write a clear "Course overview and study guide" for this course.
+Include: (1) what the learner will build or know by the end, (2) suggested study order through the modules, (3) prerequisites mindset, (4) 5-8 concrete milestones.
+Do not invent unrelated topics; stay aligned with the curriculum outline below.
+Tone: encouraging, precise, suitable for ${course.level || "Beginner"} level.`;
+    } else {
+      instructions = `Write full lesson content for the lesson titled "${String(lessonTitle).trim()}"${
+        moduleTitle ? ` in module "${String(moduleTitle).trim()}"` : ""
+      }.
+Include: learning objectives, core explanation with examples, optional hands-on suggestions, and a short "Key takeaways" or summary bullet list (no quiz section).
+Do NOT include any "Check your understanding", "Practice questions", or Q&A with inline answers—learners should not see revealed answers in the lesson text.
+Use markdown-style headings (##, ###) and bullet lists where helpful.
+For math only, use LaTeX: $inline$ and $$block$$ (avoid \\textbf{Answer} or answer keys in the lesson).
+Stay consistent with the course topic and level (${course.level || "Beginner"}).${lessonContext}`;
+    }
+
+    const prompt = `You are an expert curriculum designer and tutor.
+
+Course title: ${course.title}
+Category: ${course.category || "General"}
+Level: ${course.level || "Beginner"}
+Short description: ${course.description || ""}
+Full description: ${course.courseDescription || ""}
+
+${learningBits ? learningBits + "\n\n" : ""}Curriculum outline:
+${curriculumOutline || "(No modules linked to this course)"}
+
+Task:
+${instructions}`;
+
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307",
+    ];
+
+    let message = null;
+    let lastError = null;
+    const maxTokens = mode === "overview" ? 2048 : 4096;
+
+    for (const modelName of modelNames) {
+      try {
+        message = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: maxTokens,
+          temperature: 0.6,
+          messages: [{ role: "user", content: prompt }],
+        });
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+      }
+    }
+
+    if (!message) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || "Unknown"}`);
+    }
+
+    const raw = message.content[0].text;
+    const contentHtml = formatAiExplanationToHtml(raw);
+
+    await upsertStudentAiCourseEntry(student._id, {
+      courseId: course._id,
+      mode,
+      lessonKey,
+      moduleTitle: mode === "lesson" ? String(moduleTitle || "").trim() : "",
+      lessonTitle: mode === "lesson" ? String(lessonTitle || "").trim() : "",
+      contentMarkdown: raw,
+      contentHtml,
+    });
+
+    return res.json({
+      success: true,
+      fromCache: false,
+      saved: true,
+      mode,
+      courseId: String(course._id),
+      contentHtml,
+      contentMarkdown: raw,
+    });
+  } catch (error) {
+    console.error("generateCourseContent:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to generate course content",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+/**
+ * Generate lesson HTML from titles + optional source text (catalog/mock courses without Mongo course id).
+ * Not persisted — client may cache. Student auth required.
+ */
+const generateLessonFromContext = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can use this endpoint" });
+    }
+    if (!anthropic) {
+      return res.status(500).json({ success: false, message: "AI service is not available." });
+    }
+
+    const {
+      moduleTitle,
+      lessonTitle,
+      sourceContent,
+      courseTitle,
+      level,
+      category,
+      learningOutcomes,
+    } = req.body || {};
+
+    if (!lessonTitle || !String(lessonTitle).trim()) {
+      return res.status(400).json({ success: false, message: "lessonTitle is required" });
+    }
+
+    const src =
+      typeof sourceContent === "string" && sourceContent.trim()
+        ? sourceContent.trim().slice(0, 12000)
+        : "";
+
+    const outcomesBlock =
+      Array.isArray(learningOutcomes) && learningOutcomes.length > 0
+        ? `Course learning outcomes (stay consistent where relevant):\n${learningOutcomes
+            .slice(0, 16)
+            .map((o) => `- ${String(o)}`)
+            .join("\n")}\n\n`
+        : "";
+
+    const prompt = `You are an expert tutor. The learner opened a specific lesson in their course app. Generate rich lesson content they can read in the "course content" panel.
+
+Course: ${String(courseTitle || "Course").trim()}
+Module: ${String(moduleTitle || "").trim()}
+Lesson title: ${String(lessonTitle).trim()}
+${category ? `Category: ${String(category).trim()}\n` : ""}Level: ${String(level || "Beginner").trim()}
+
+${outcomesBlock}${
+      src
+        ? `Primary context — this is the lesson outline or source material from the course. Teach from it, expand with intuition, examples, and structure:\n${src}\n`
+        : "No short outline was provided. Teach this lesson title thoroughly for the stated level.\n"
+    }
+
+Produce: clear learning objectives; structured explanation with examples; optional hands-on ideas; end with a brief "Key takeaways" list—not a quiz.
+Do NOT add "Check your understanding", practice Q&A, or inline answers (no Answer: lines, no \\textbf{Answer}).
+Use markdown headings (##, ###). Use LaTeX $inline$ and $$block$$ only for real math—not for labeling answers.`;
+
+    const modelNames = [
+      DEFAULT_CLAUDE_MODEL,
+      "claude-3-sonnet-20240229",
+      "claude-3-opus-20240229",
+      "claude-3-haiku-20240307",
+    ];
+
+    let message = null;
+    let lastError = null;
+    for (const modelName of modelNames) {
+      try {
+        message = await anthropic.messages.create({
+          model: modelName,
+          max_tokens: 4096,
+          temperature: 0.55,
+          messages: [{ role: "user", content: prompt }],
+        });
+        break;
+      } catch (modelError) {
+        lastError = modelError;
+      }
+    }
+
+    if (!message) {
+      throw new Error(`All Claude models failed. Last error: ${lastError?.message || "Unknown"}`);
+    }
+
+    const raw = message.content[0].text;
+    const contentHtml = formatAiExplanationToHtml(raw);
+
+    return res.json({
+      success: true,
+      contentHtml,
+      contentMarkdown: raw,
+    });
+  } catch (error) {
+    console.error("generateLessonFromContext:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to generate lesson content",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+const countTotalLessonsInCourseDoc = (course) => {
+  let t = 0;
+  for (const mod of course.modules || []) {
+    t += (mod.lessons || []).length;
+  }
+  return t;
+};
+
+const countUniqueCompletedLessonIds = (progressByModule) => {
+  const seen = new Set();
+  for (const row of progressByModule || []) {
+    for (const lid of row.completedLessonIds || []) {
+      seen.add(String(lid));
+    }
+  }
+  return seen.size;
+};
+
+const lessonExistsInCourse = (course, moduleId, lessonId) => {
+  const mid = String(moduleId);
+  const lid = String(lessonId);
+  for (const mod of course.modules || []) {
+    if (String(mod._id) !== mid) continue;
+    for (const les of mod.lessons || []) {
+      if (String(les._id) === lid) return true;
+    }
+  }
+  return false;
+};
+
+const recalcStudentCourseProgressEntry = (entry, course) => {
+  const total = countTotalLessonsInCourseDoc(course);
+  const completed = countUniqueCompletedLessonIds(entry.progressByModule);
+  entry.totalLessons = total;
+  entry.completedLessonsCount = completed;
+  entry.percentComplete = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  entry.isCompleted = total > 0 && completed >= total;
+  entry.updatedAt = new Date();
+};
+
+const syncEnrolledCourseProgress = async (studentMongoId, courseMongoId, entry) => {
+  const enc = await EnrolledCourse.findOne({
+    studentId: studentMongoId,
+    courseId: courseMongoId,
+    paymentStatus: "completed",
+  });
+  if (!enc) return;
+  enc.progress = (entry.progressByModule || []).map((p) => ({
+    moduleId: p.moduleId,
+    completedLessons: [...(p.completedLessonIds || [])],
+  }));
+  enc.isCompleted = Boolean(entry.isCompleted);
+  await enc.save();
+};
+
+const getOrCreateStudentCourseProgressEntry = (student, courseMongoId) => {
+  if (!student.courseLearningProgress) {
+    student.courseLearningProgress = [];
+  }
+  let entry = student.courseLearningProgress.find((e) => String(e.courseId) === String(courseMongoId));
+  if (!entry) {
+    entry = {
+      courseId: courseMongoId,
+      progressByModule: [],
+      percentComplete: 0,
+      totalLessons: 0,
+      completedLessonsCount: 0,
+      isCompleted: false,
+    };
+    student.courseLearningProgress.push(entry);
+  }
+  return entry;
+};
+
+/**
+ * POST { courseId, moduleId, lessonId, action: "visit" | "complete" | "incomplete" }
+ * Updates Student.courseLearningProgress and mirrors to EnrolledCourse when enrolled.
+ */
+const updateCourseProgress = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can update progress" });
+    }
+
+    const { courseId, moduleId, lessonId, action = "visit" } = req.body || {};
+
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+    if (!moduleId || !mongoose.Types.ObjectId.isValid(moduleId)) {
+      return res.status(400).json({ success: false, message: "Valid moduleId is required" });
+    }
+    if (!lessonId || !mongoose.Types.ObjectId.isValid(lessonId)) {
+      return res.status(400).json({ success: false, message: "Valid lessonId is required" });
+    }
+    if (!["visit", "complete", "incomplete"].includes(action)) {
+      return res.status(400).json({ success: false, message: 'action must be "visit", "complete", or "incomplete"' });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const courseLean = await Course.findById(courseId).select("price").lean();
+    if (!courseLean) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const gate = await getCourseEnrollmentGate(student._id, courseLean);
+    if (!gate.allowed) {
+      return sendCourseEnrollmentRequired(res, gate.isFreeCourse);
+    }
+
+    const course = await Course.findById(courseId).populate({
+      path: "modules",
+      populate: { path: "lessons" },
+    });
+    if (!lessonExistsInCourse(course, moduleId, lessonId)) {
+      return res.status(400).json({ success: false, message: "Lesson not found in this module" });
+    }
+
+    const entry = getOrCreateStudentCourseProgressEntry(student, course._id);
+    entry.lastAccessedAt = new Date();
+    entry.lastModuleId = new mongoose.Types.ObjectId(moduleId);
+    entry.lastLessonId = new mongoose.Types.ObjectId(lessonId);
+
+    if (action === "complete" || action === "incomplete") {
+      let modRow = entry.progressByModule.find((r) => String(r.moduleId) === String(moduleId));
+      if (!modRow) {
+        modRow = {
+          moduleId: new mongoose.Types.ObjectId(moduleId),
+          completedLessonIds: [],
+        };
+        entry.progressByModule.push(modRow);
+      }
+      const lidStr = String(lessonId);
+      const ids = (modRow.completedLessonIds || []).map((x) => String(x));
+      if (action === "complete" && !ids.includes(lidStr)) {
+        modRow.completedLessonIds.push(new mongoose.Types.ObjectId(lessonId));
+      }
+      if (action === "incomplete") {
+        modRow.completedLessonIds = (modRow.completedLessonIds || []).filter((x) => String(x) !== lidStr);
+      }
+    }
+
+    recalcStudentCourseProgressEntry(entry, course);
+    student.markModified("courseLearningProgress");
+    await student.save();
+    await syncEnrolledCourseProgress(student._id, course._id, entry);
+
+    const completedLessonIds = [];
+    const seen = new Set();
+    for (const row of entry.progressByModule || []) {
+      for (const lid of row.completedLessonIds || []) {
+        const s = String(lid);
+        if (!seen.has(s)) {
+          seen.add(s);
+          completedLessonIds.push(s);
+        }
+      }
+    }
+
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_progress",
+      courseId: course._id,
+      moduleId,
+      lessonId,
+      progressPercent: entry.percentComplete,
+      metadata: { action },
+    });
+    return res.json({
+      success: true,
+      courseId: String(course._id),
+      percentComplete: entry.percentComplete,
+      totalLessons: entry.totalLessons,
+      completedLessonsCount: entry.completedLessonsCount,
+      isCompleted: entry.isCompleted,
+      completedLessonIds,
+      lastAccessedAt: entry.lastAccessedAt,
+      lastModuleId: entry.lastModuleId ? String(entry.lastModuleId) : null,
+      lastLessonId: entry.lastLessonId ? String(entry.lastLessonId) : null,
+    });
+  } catch (error) {
+    console.error("updateCourseProgress:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update progress",
+    });
+  }
+};
+
+const getCourseProgress = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can view progress" });
+    }
+
+    const { courseId } = req.params;
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+
+    const student = await Student.findOne({ userId }).lean();
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const courseLean = await Course.findById(courseId).select("price").lean();
+    if (!courseLean) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const gate = await getCourseEnrollmentGate(student._id, courseLean);
+    if (!gate.allowed) {
+      return sendCourseEnrollmentRequired(res, gate.isFreeCourse);
+    }
+
+    const course = await Course.findById(courseId).populate({
+      path: "modules",
+      populate: { path: "lessons" },
+    });
+
+    const entry = (student.courseLearningProgress || []).find((e) => String(e.courseId) === String(courseId));
+    const totalLessons = countTotalLessonsInCourseDoc(course);
+
+    if (!entry) {
+      return res.json({
+        success: true,
+        courseId: String(course._id),
+        percentComplete: 0,
+        totalLessons,
+        completedLessonsCount: 0,
+        isCompleted: false,
+        completedLessonIds: [],
+        lastAccessedAt: null,
+        lastModuleId: null,
+        lastLessonId: null,
+        progressByModule: [],
+      });
+    }
+
+    const completedLessonIds = [];
+    const seen = new Set();
+    for (const row of entry.progressByModule || []) {
+      for (const lid of row.completedLessonIds || []) {
+        const s = String(lid);
+        if (!seen.has(s)) {
+          seen.add(s);
+          completedLessonIds.push(s);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      courseId: String(course._id),
+      percentComplete: entry.percentComplete ?? 0,
+      totalLessons: entry.totalLessons ?? totalLessons,
+      completedLessonsCount: entry.completedLessonsCount ?? completedLessonIds.length,
+      isCompleted: Boolean(entry.isCompleted),
+      completedLessonIds,
+      lastAccessedAt: entry.lastAccessedAt || null,
+      lastModuleId: entry.lastModuleId ? String(entry.lastModuleId) : null,
+      lastLessonId: entry.lastLessonId ? String(entry.lastLessonId) : null,
+      progressByModule: entry.progressByModule || [],
+    });
+  } catch (error) {
+    console.error("getCourseProgress:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to load progress",
+    });
+  }
+};
+
+/** All saved AI course pieces for this student + course (for hydrating the player without extra LLM calls). */
+const getStudentCourseAiContent = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can use this endpoint" });
+    }
+
+    const { courseId } = req.params;
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const course = await Course.findById(courseId).select("price").lean();
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const gate = await getCourseEnrollmentGate(student._id, course);
+    if (!gate.allowed) {
+      return sendCourseEnrollmentRequired(res, gate.isFreeCourse);
+    }
+
+    const fresh = await Student.findById(student._id).select("courseAiGeneratedContent").lean();
+    const items = (fresh?.courseAiGeneratedContent || [])
+      .filter((e) => String(e.courseId) === String(course._id))
+      .map((e) => ({
+        mode: e.mode,
+        lessonKey: e.lessonKey,
+        moduleTitle: e.moduleTitle,
+        lessonTitle: e.lessonTitle,
+        contentHtml: e.contentHtml,
+        updatedAt: e.updatedAt,
+      }));
+
+    return res.json({
+      success: true,
+      courseId: String(course._id),
+      items,
+    });
+  } catch (error) {
+    console.error("getStudentCourseAiContent:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to load saved course content",
+    });
+  }
+};
+
+/** ₹0 courses: explicit enroll creates EnrolledCourse with paymentStatus completed (same as paid). */
+const enrollFreeCourse = async (req, res) => {
+  try {
+    const { courseId } = req.body || {};
+    const userId = req.user?.id || req.user?._id;
+
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can enroll" });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    if (!coursePriceIsFree(course.price)) {
+      return res.status(400).json({
+        success: false,
+        message: "This course is not free. Complete payment to enroll.",
+      });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const existing = await EnrolledCourse.findOne({
+      studentId: student._id,
+      courseId: course._id,
+      paymentStatus: "completed",
+    });
+    if (existing) {
+      return res.json({
+        success: true,
+        message: "You are already enrolled in this course",
+        alreadyEnrolled: true,
+      });
+    }
+
+    const courseIdStr = String(course._id);
+    const hasCourse = (student.enrolledCourses || []).some((c) => String(c) === courseIdStr);
+    if (!hasCourse) {
+      student.enrolledCourses.push(course._id);
+      await student.save();
+    }
+
+    const userIdStr = String(userId);
+    const alreadyOnCourse = (course.enrolledStudents || []).some((u) => String(u) === userIdStr);
+    if (!alreadyOnCourse) {
+      course.enrolledStudents.push(userId);
+      await course.save();
+    }
+
+    await EnrolledCourse.create({
+      studentId: student._id,
+      courseId: course._id,
+      paymentStatus: "completed",
+    });
+    await logStudentActivity({
+      userId,
+      studentId: student._id,
+      eventType: "course_enroll",
+      courseId: course._id,
+      metadata: { mode: "free" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Successfully enrolled in free course",
+      course: { _id: course._id, title: course.title },
+    });
+  } catch (err) {
+    console.error("enrollFreeCourse:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Error enrolling in course",
+      error: err.message,
+    });
+  }
+};
+
+const getCourseAccessStatus = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can check access" });
+    }
+
+    const { courseId } = req.params;
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const course = await Course.findById(courseId).select("price title").lean();
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const enrollment = await EnrolledCourse.findOne({
+      studentId: student._id,
+      courseId: course._id,
+      paymentStatus: "completed",
+    });
+
+    const isFreeCourse = coursePriceIsFree(course.price);
+
+    return res.json({
+      success: true,
+      hasAccess: Boolean(enrollment),
+      isFreeCourse,
+      needsPurchase: !isFreeCourse && !enrollment,
+      needsFreeEnroll: isFreeCourse && !enrollment,
+    });
+  } catch (error) {
+    console.error("getCourseAccessStatus:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to check access",
+    });
+  }
+};
+
+/** Full course + modules + lessons for the player — only when enrolled (paid or free enroll). */
+const getCoursePlayerData = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (req.user?.role !== "student") {
+      return res.status(403).json({ success: false, message: "Only students can open the course player" });
+    }
+
+    const { courseId } = req.params;
+    if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Valid courseId is required" });
+    }
+
+    const student = await Student.findOne({ userId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    const courseLean = await Course.findById(courseId).select("price").lean();
+    if (!courseLean) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const enrollment = await EnrolledCourse.findOne({
+      studentId: student._id,
+      courseId: courseLean._id,
+      paymentStatus: "completed",
+    });
+
+    if (!enrollment) {
+      return sendCourseEnrollmentRequired(res, coursePriceIsFree(courseLean.price));
+    }
+
+    const course = await Course.findById(courseId).populate({
+      path: "modules",
+      populate: { path: "lessons" },
+    });
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+
+    const modules = (course.modules || []).map((mod) => ({
+      _id: mod._id,
+      title: mod.title,
+      lessons: (mod.lessons || []).map((l) => ({
+        _id: l._id,
+        title: l.title,
+        content: l.content,
+        duration: l.duration,
+      })),
+    }));
+
+    return res.json({
+      success: true,
+      course: {
+        _id: course._id,
+        title: course.title,
+        category: course.category,
+        level: course.level,
+        learningOutcomes: course.learningOutcomes || [],
+        modules,
+      },
+    });
+  } catch (error) {
+    console.error("getCoursePlayerData:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to load course",
+    });
+  }
+};
+
+
   module.exports = {
     getTests,
+    getQuestionBank,
+    revealQuestionBankAnswer,
     getCourseById,
     getTestById,
     getEnrolledTests,
@@ -2356,6 +3575,9 @@ Return ONLY the JSON array, no other text.`;
     createOrder,
     verifyPayment,
     enrollFreeTest,
+    enrollFreeCourse,
+    getCourseAccessStatus,
+    getCoursePlayerData,
     getCourse,
     getCartCourses,
     getModulesDetails,
@@ -2371,6 +3593,11 @@ Return ONLY the JSON array, no other text.`;
     aiChat,
     generateQuestionExplanation,
     getAICareerRecommendations,
+    generateCourseContent,
+    generateLessonFromContext,
+    getStudentCourseAiContent,
+    updateCourseProgress,
+    getCourseProgress,
     getLibraryDocumentsForStudent,
     getLibraryDocumentByIdForStudent,
     createLibraryOrder,

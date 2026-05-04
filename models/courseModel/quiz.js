@@ -3,6 +3,11 @@ const mongoose = require("mongoose");
 const QuizSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   duration: { type: Number, required: true }, // Duration in minutes
+  /** When true, questions are exposed on the student Question Bank (no answers). */
+  includeInQuestionBank: { type: Boolean, default: false },
+  /** Grouping labels for the student Question Bank (set by content manager). */
+  bankSubject: { type: String, default: "General", trim: true },
+  bankCategory: { type: String, default: "General", trim: true },
   questions: [
     {
       questionText: { type: String, required: true, trim: true },
