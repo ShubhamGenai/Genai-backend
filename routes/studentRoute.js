@@ -12,6 +12,13 @@ router.put("/profile/skills", authMiddleware, studentController.updateMyStudentS
 
 //test
 router.get("/getTests",studentController.getTests);
+router.get("/getQuestionBank", studentController.getQuestionBank);
+router.get("/question-bank", studentController.getQuestionBank);
+router.post(
+  "/question-bank/reveal-answer",
+  authMiddleware,
+  studentController.revealQuestionBankAnswer
+);
 router.get("/getTestById/:id",studentController.getTestById)
 router.get("/getTestCategories",studentController.getTestCategories)
 

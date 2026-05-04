@@ -221,13 +221,171 @@ const getCourse = async (req, res) => {
     }
   };
   
-  // ✅ Fetch all tests
+  const TEST_KINDS = ["standard", "practice", "mock", "test_series"];
+
+  // ✅ Fetch tests (optional ?testKind=practice|mock|test_series|standard)
   const getTests = async (req, res) => {
     try {
-      const tests = await Test.find() // Populate quizzes if needed
+      const { testKind } = req.query;
+      let filter = {};
+      if (testKind) {
+        if (!TEST_KINDS.includes(String(testKind))) {
+          return res.status(400).json({ error: "Invalid testKind query" });
+        }
+        if (String(testKind) === "standard") {
+          filter = {
+            $or: [
+              { testKind: "standard" },
+              { testKind: { $exists: false } },
+              { testKind: null },
+            ],
+          };
+        } else {
+          filter = { testKind: String(testKind) };
+        }
+      }
+      const tests = await Test.find(filter);
       res.status(200).json(tests);
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  };
+
+  /** Student question bank: grouped by subject + category (no correct answers in GET). */
+  const getQuestionBank = async (req, res) => {
+    try {
+      const search = String(req.query.search || "").trim().toLowerCase();
+
+      const quizzes = await Quiz.find({ includeInQuestionBank: true })
+        .select("title questions bankSubject bankCategory")
+        .lean();
+
+      const groupMap = new Map();
+
+      for (const q of quizzes) {
+        const subject = String(q.bankSubject || "General").trim() || "General";
+        const category = String(q.bankCategory || "General").trim() || "General";
+        const key = `${subject}|||${category}`;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, { subject, category, questions: [] });
+        }
+        const bucket = groupMap.get(key);
+        const questionList = q.questions || [];
+
+        questionList.forEach((sub, idx) => {
+          const text = String(sub.questionText || "");
+          if (search) {
+            const hay = `${text} ${subject} ${category} ${q.title || ""}`.toLowerCase();
+            if (!hay.includes(search)) return;
+          }
+          const subId = sub._id != null ? String(sub._id) : null;
+          bucket.questions.push({
+            id: `${q._id}_${subId || `idx${idx}`}`,
+            quizId: String(q._id),
+            questionId: subId || undefined,
+            questionIndex: subId == null ? idx : undefined,
+            quizTitle: q.title,
+            questionText: text,
+            passage: sub.passage || "",
+            options: Array.isArray(sub.options) ? sub.options.map((o) => String(o)) : [],
+            marks: sub.marks && !Number.isNaN(Number(sub.marks)) ? Number(sub.marks) : 1,
+            imageUrl:
+              sub.imageUrl && String(sub.imageUrl).trim()
+                ? String(sub.imageUrl).trim()
+                : "",
+          });
+        });
+      }
+
+      const groups = Array.from(groupMap.values())
+        .filter((g) => g.questions.length > 0)
+        .sort(
+          (a, b) =>
+            a.subject.localeCompare(b.subject, undefined, { sensitivity: "base" }) ||
+            a.category.localeCompare(b.category, undefined, { sensitivity: "base" })
+        );
+
+      const totalQuestions = groups.reduce((n, g) => n + g.questions.length, 0);
+
+      res.status(200).json({
+        success: true,
+        groups,
+        totalQuestions,
+      });
+    } catch (error) {
+      console.error("getQuestionBank:", error);
+      res.status(500).json({ success: false, error: error.message || "Failed to load question bank" });
+    }
+  };
+
+  /** Signed-in students only: reveal correct answer for a question-bank item. */
+  const revealQuestionBankAnswer = async (req, res) => {
+    try {
+      const userId = req.user?.id || req.user?._id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Sign in required" });
+      }
+      if (req.user?.role && req.user.role !== "student") {
+        return res.status(403).json({ success: false, message: "Students only" });
+      }
+
+      const { quizId, questionId, questionIndex } = req.body || {};
+      if (!quizId || (!questionId && questionIndex === undefined)) {
+        return res.status(400).json({
+          success: false,
+          message: "quizId and (questionId or questionIndex) are required",
+        });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(quizId)) {
+        return res.status(400).json({ success: false, message: "Invalid quizId" });
+      }
+
+      const quiz = await Quiz.findOne({
+        _id: quizId,
+        includeInQuestionBank: true,
+      });
+
+      if (!quiz) {
+        return res.status(404).json({ success: false, message: "Quiz not found or not in question bank" });
+      }
+
+      let sub = null;
+      if (questionId) {
+        try {
+          sub = quiz.questions.id(String(questionId));
+        } catch (e) {
+          sub = null;
+        }
+        if (!sub) {
+          sub = (quiz.questions || []).find((x) => String(x._id) === String(questionId));
+        }
+      } else {
+        const qIdx = parseInt(questionIndex, 10);
+        if (!Number.isNaN(qIdx) && qIdx >= 0) {
+          sub = quiz.questions[qIdx];
+        }
+      }
+
+      if (!sub) {
+        return res.status(404).json({ success: false, message: "Question not found" });
+      }
+
+      return res.status(200).json({
+        success: true,
+        correctAnswer: String(sub.answer || "").trim(),
+        questionText: sub.questionText,
+        options: (sub.options || []).map((o) => String(o)),
+        subject: quiz.bankSubject || "General",
+        category: quiz.bankCategory || "General",
+        quizTitle: quiz.title,
+      });
+    } catch (error) {
+      console.error("revealQuestionBankAnswer:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reveal answer",
+      });
     }
   };
 
@@ -3402,6 +3560,8 @@ const getCoursePlayerData = async (req, res) => {
 
   module.exports = {
     getTests,
+    getQuestionBank,
+    revealQuestionBankAnswer,
     getCourseById,
     getTestById,
     getEnrolledTests,
